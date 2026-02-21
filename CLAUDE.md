@@ -24,6 +24,8 @@ adb install app/build/outputs/apk/debug/app-debug.apk
 
 **Prerequisites:** JDK 17, Android SDK API 34, NDK r25+ (25.2.9519653), CMake 3.22.1+
 
+**JDK note:** If default JDK is newer than 17, prefix builds with `JAVA_HOME=/usr/lib/jvm/java-17-openjdk`
+
 **Environment variables:** `ANDROID_HOME`, `ANDROID_NDK_HOME`
 
 **Submodule:** whisper.cpp must be initialized: `git submodule update --init --recursive`
@@ -78,7 +80,7 @@ Changes to files in `com.voidterm.contracts` affect the entire voice pipeline. `
 
 ### GameBoy Control Panel
 
-`GameBoyControlPanel` provides a touchscreen control panel styled like a Game Boy. Includes D-pad, modifier keys (Ctrl, Shift, Alt, Esc), Tab/S-Tab, Enter/S-Enter, and macro buttons. Communicates with `TermuxActivity` via `ControlPanelListener` interface.
+`GameBoyControlPanel` provides a touchscreen control panel styled like a Game Boy. Includes D-pad, modifier keys (Ctrl, Shift, Esc), Tab/S-Tab, Enter/S-Enter, and macro buttons. Communicates with `TermuxActivity` via `ControlPanelListener` interface. Key codes: Enter sends `\r` (submit), S-Enter sends `\n` (newline without submit), TAB sends `\t` (respects SHF state for backtab), S-TAB sends `\033[Z` (backtab).
 
 ## Implementation Plan
 
