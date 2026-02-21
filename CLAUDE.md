@@ -51,7 +51,7 @@ User confirms (Enter) → VoiceInputCallback.onVoiceTextReady() → Terminal PTY
 | `com.voidterm.contracts` | Shared interfaces: `VoiceState`, `VoiceInputCallback`, `TranscriptionListener` |
 | `com.voidterm.voice` | Voice system: `VoiceInputManager`, `AudioCapture`, `WhisperBridge`, `TranscriptionOverlay` |
 | `com.voidterm.input` | Controller mapping: `QuestInputHandler` |
-| `com.voidterm.app` | Termux activity modifications: `ExtraKeysConfig`, TermuxActivity (pending) |
+| `com.voidterm.app` | Activity, UI, styling: `TermuxActivity`, `GameBoyControlPanel`, `TerminalStyleDialog`, `ExtraKeysConfig` |
 
 ### JNI Layer
 
@@ -70,9 +70,19 @@ Thread safety: `VoiceInputManager` uses `stateLock` for state transitions, dispa
 
 Changes to files in `com.voidterm.contracts` affect the entire voice pipeline. `VoiceInputCallback` is implemented by TermuxActivity (injects text into PTY). `TranscriptionListener` is implemented by `VoiceInputManager` (receives overlay user actions).
 
+### Context Menu & Style System
+
+`TermuxActivity` registers `TerminalView` for context menus (`registerForContextMenu`). The "More" button in text selection triggers `showContextMenu()` which is handled by `onCreateContextMenu`/`onContextItemSelected` in the Activity. Options: Paste, Share, Select URL, Style, Reset, Toggle keyboard.
+
+`TerminalStyleDialog` manages terminal appearance (font size, font family, color scheme). Preferences persist via `SharedPreferences` ("voidterm_style"). Bundled fonts (TTF) are in `app/src/main/assets/fonts/`. Colors are applied directly to `mEmulator.mColors.mCurrentColors[]` indices 256 (fg), 257 (bg), 258 (cursor). Saved styles are restored on session start via `applySavedStyle()`.
+
+### GameBoy Control Panel
+
+`GameBoyControlPanel` provides a touchscreen control panel styled like a Game Boy. Includes D-pad, modifier keys (Ctrl, Shift, Alt, Esc), Tab/S-Tab, Enter/S-Enter, and macro buttons. Communicates with `TermuxActivity` via `ControlPanelListener` interface.
+
 ## Implementation Plan
 
-`plans/IMPLEMENTATION_PLAN.md` defines 6 phases with strict file ownership per agent. Phases 1-3 (scaffolding, components, core systems) produce independent modules. Phase 4 (integration) wires everything into TermuxActivity. Phases 5-6 are docs and validation. Current status: Phases 1-3 implemented, Phase 4+ pending.
+`plans/IMPLEMENTATION_PLAN.md` defines 6 phases with strict file ownership per agent. Phases 1-3 (scaffolding, components, core systems) produce independent modules. Phase 4 (integration) wires everything into TermuxActivity. Phases 5-6 are docs and validation. Current status: Phases 1-4 implemented.
 
 ## Code Style
 
