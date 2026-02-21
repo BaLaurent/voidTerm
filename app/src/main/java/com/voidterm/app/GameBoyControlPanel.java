@@ -306,15 +306,34 @@ public class GameBoyControlPanel extends FrameLayout {
 
         int spacing = dp(6);
 
+        // S-TAB (Shift+Tab / backtab) — 40dp
+        int sTabSize = dp(40);
+        Button sTab = makeButton(context, sTabSize, "S-TAB", 8f, COLOR_MODIFIER, false);
+        sTab.setOnClickListener(v -> {
+            v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (listener != null) listener.onSendToTerminal("\033[Z");
+        });
+        LinearLayout.LayoutParams sTabLp = new LinearLayout.LayoutParams(sTabSize, sTabSize);
+        sTabLp.gravity = Gravity.CENTER_HORIZONTAL;
+        col.addView(sTab, sTabLp);
+
         // TAB — 48dp, matches arrow size
         int tabSize = dp(48);
         Button tab = makeButton(context, tabSize, "TAB", 10f, COLOR_PRIMARY, false);
         tab.setOnClickListener(v -> {
             v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-            if (listener != null) listener.onSendToTerminal("\t");
+            if (listener != null) {
+                if (shiftActive) {
+                    listener.onSendToTerminal("\033[Z");
+                    resetShift();
+                } else {
+                    listener.onSendToTerminal("\t");
+                }
+            }
         });
         LinearLayout.LayoutParams tabLp = new LinearLayout.LayoutParams(tabSize, tabSize);
         tabLp.gravity = Gravity.CENTER_HORIZONTAL;
+        tabLp.topMargin = spacing;
         col.addView(tab, tabLp);
 
         // Enter — 52dp, largest button in the panel
@@ -322,12 +341,24 @@ public class GameBoyControlPanel extends FrameLayout {
         Button enter = makeButton(context, enterSize, "\u21B5", 18f, COLOR_PRIMARY, false);
         enter.setOnClickListener(v -> {
             v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-            if (listener != null) listener.onSendToTerminal("\n");
+            if (listener != null) listener.onSendToTerminal("\r");
         });
         LinearLayout.LayoutParams enterLp = new LinearLayout.LayoutParams(enterSize, enterSize);
         enterLp.gravity = Gravity.CENTER_HORIZONTAL;
         enterLp.topMargin = spacing;
         col.addView(enter, enterLp);
+
+        // S-Enter (Shift+Enter / newline without submit) — 40dp
+        int sEnterSize = dp(40);
+        Button sEnter = makeButton(context, sEnterSize, "S-\u21B5", 8f, COLOR_MODIFIER, false);
+        sEnter.setOnClickListener(v -> {
+            v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (listener != null) listener.onSendToTerminal("\n");
+        });
+        LinearLayout.LayoutParams sEnterLp = new LinearLayout.LayoutParams(sEnterSize, sEnterSize);
+        sEnterLp.gravity = Gravity.CENTER_HORIZONTAL;
+        sEnterLp.topMargin = spacing;
+        col.addView(sEnter, sEnterLp);
 
         return col;
     }

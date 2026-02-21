@@ -4,12 +4,17 @@ import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.os.Bundle;
+import android.text.TextUtils;
 import android.util.Log;
+import android.view.ContextMenu;
 import android.view.Gravity;
 import android.view.KeyEvent;
+import android.view.MenuItem;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -91,6 +96,7 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         terminalView.setFocusable(true);
         terminalView.setFocusableInTouchMode(true);
         terminalView.requestFocus();
+        registerForContextMenu(terminalView);
         screenFrame.addView(terminalView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
@@ -180,6 +186,7 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
 
             terminalView.attachSession(terminalSession);
             sessionClient.setSession(terminalSession);
+            TerminalStyleDialog.applySavedStyle(this, terminalView);
 
             Log.i(TAG, "Terminal session started: shell=" + shell + " home=" + home);
         } catch (Exception e) {
@@ -439,6 +446,91 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
      */
     public GameBoyControlPanel getControlPanel() {
         return controlPanel;
+    }
+
+    // --- Context menu ("More" button) ---
+
+    private static final int CONTEXT_MENU_SELECT_URL = 0;
+    private static final int CONTEXT_MENU_SHARE_TEXT = 1;
+    private static final int CONTEXT_MENU_RESET_TERMINAL = 2;
+    private static final int CONTEXT_MENU_TOGGLE_KEYBOARD = 3;
+    private static final int CONTEXT_MENU_PASTE = 4;
+    private static final int CONTEXT_MENU_STYLE = 5;
+
+    @Override
+    public void onCreateContextMenu(ContextMenu menu, View v, ContextMenu.ContextMenuInfo menuInfo) {
+        String selectedText = terminalView.getStoredSelectedText();
+        boolean hasSelection = !TextUtils.isEmpty(selectedText);
+
+        menu.add(0, CONTEXT_MENU_PASTE, 0, "Paste");
+        if (hasSelection) {
+            menu.add(0, CONTEXT_MENU_SHARE_TEXT, 0, "Share selected text");
+        }
+        menu.add(0, CONTEXT_MENU_SELECT_URL, 0, "Select URL");
+        menu.add(0, CONTEXT_MENU_STYLE, 0, "Style");
+        menu.add(0, CONTEXT_MENU_RESET_TERMINAL, 0, "Reset terminal");
+        menu.add(0, CONTEXT_MENU_TOGGLE_KEYBOARD, 0, "Toggle keyboard");
+    }
+
+    @Override
+    public boolean onContextItemSelected(MenuItem item) {
+        switch (item.getItemId()) {
+            case CONTEXT_MENU_PASTE:
+                pasteFromClipboard();
+                return true;
+            case CONTEXT_MENU_SHARE_TEXT: {
+                String text = terminalView.getStoredSelectedText();
+                terminalView.unsetStoredSelectedText();
+                if (!TextUtils.isEmpty(text)) {
+                    Intent shareIntent = new Intent(Intent.ACTION_SEND);
+                    shareIntent.setType("text/plain");
+                    shareIntent.putExtra(Intent.EXTRA_TEXT, text);
+                    startActivity(Intent.createChooser(shareIntent, "Share text"));
+                }
+                return true;
+            }
+            case CONTEXT_MENU_SELECT_URL:
+                selectUrlFromTerminal();
+                return true;
+            case CONTEXT_MENU_RESET_TERMINAL:
+                if (terminalSession != null) {
+                    terminalSession.reset();
+                    terminalView.invalidate();
+                }
+                return true;
+            case CONTEXT_MENU_STYLE:
+                new TerminalStyleDialog(this, terminalView).show();
+                return true;
+            case CONTEXT_MENU_TOGGLE_KEYBOARD:
+                android.view.inputmethod.InputMethodManager imm =
+                        (android.view.inputmethod.InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+                if (imm != null) {
+                    imm.toggleSoftInput(android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT, 0);
+                }
+                return true;
+            default:
+                return super.onContextItemSelected(item);
+        }
+    }
+
+    private void selectUrlFromTerminal() {
+        if (terminalView.mEmulator == null) return;
+        String text = terminalView.mEmulator.getScreen().getTranscriptText();
+        // Find last URL-like pattern in the terminal buffer
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("https?://[\\w\\-._~:/?#\\[\\]@!$&'()*+,;=%]+")
+                .matcher(text);
+        String lastUrl = null;
+        while (matcher.find()) {
+            lastUrl = matcher.group();
+        }
+        if (lastUrl != null) {
+            ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            if (clipboard != null) {
+                clipboard.setPrimaryClip(ClipData.newPlainText("URL", lastUrl));
+                Log.i(TAG, "URL copied to clipboard: " + lastUrl);
+            }
+        }
     }
 
     @Override
