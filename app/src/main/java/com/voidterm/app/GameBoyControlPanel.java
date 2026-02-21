@@ -64,6 +64,7 @@ public class GameBoyControlPanel extends FrameLayout {
     public interface ControlPanelListener {
         void onSendToTerminal(String text);
         void onVoiceToggle();
+        void onSettingsRequested();
     }
 
     public GameBoyControlPanel(Context context) {
@@ -85,6 +86,20 @@ public class GameBoyControlPanel extends FrameLayout {
         addView(root, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
+
+        // Burger menu button — bottom center (space bar position)
+        Button menuBtn = makeButton(context, dp(36), "\u2630", 16f, COLOR_MACRO, true);
+        menuBtn.setPadding(dp(24), 0, dp(24), 0);
+        menuBtn.setMinWidth(dp(80));
+        menuBtn.setOnClickListener(v -> {
+            v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (listener != null) listener.onSettingsRequested();
+        });
+        FrameLayout.LayoutParams menuLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(36),
+                Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        menuLp.bottomMargin = dp(4);
+        addView(menuBtn, menuLp);
 
         // Far left: macros (weight=2, rarely used)
         root.addView(buildMacroZone(context), weightParams(2f));
@@ -116,7 +131,10 @@ public class GameBoyControlPanel extends FrameLayout {
             btn.setOnClickListener(v -> {
                 v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
                 if (listener != null) {
-                    listener.onSendToTerminal(macros[index][1] + "\n");
+                    listener.onSendToTerminal(macros[index][1]);
+                    v.postDelayed(() -> {
+                        if (listener != null) listener.onSendToTerminal("\r");
+                    }, 50);
                 }
             });
             btn.setOnLongClickListener(v -> {

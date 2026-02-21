@@ -1,6 +1,7 @@
 package com.voidterm.voice;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
@@ -35,13 +36,15 @@ public class VoiceInputManager implements TranscriptionListener {
     private static final String TAG = "VoiceInputManager";
     private static final long VOLUME_POLL_INTERVAL_MS = 100;
     private static final long ERROR_DISMISS_DELAY_MS = 3000;
-    private static final String WHISPER_MODEL = "ggml-base.bin";
+    private static final String DEFAULT_MODEL = "ggml-base.bin";
     private static final String TRANSCRIPTION_LANGUAGE = "en";
+    private static final String PREFS_NAME = "voidterm_settings";
+    private static final String KEY_MODEL_NAME = "whisper_model_name";
 
     private final TranscriptionOverlay overlay;
     private final VoiceInputCallback callback;
     private final AudioCapture audioCapture;
-    private final WhisperBridge whisperBridge;
+    private WhisperBridge whisperBridge;
     private final Handler mainHandler;
 
     private final Object stateLock = new Object();
@@ -84,7 +87,10 @@ public class VoiceInputManager implements TranscriptionListener {
 
         overlay.setTranscriptionListener(this);
 
-        whisperBridge.loadModel(context, WHISPER_MODEL, new WhisperBridge.Callback() {
+        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        String modelName = prefs.getString(KEY_MODEL_NAME, DEFAULT_MODEL);
+
+        whisperBridge.loadModel(context, modelName, new WhisperBridge.Callback() {
             @Override
             public void onSuccess(String result) {
                 Log.i(TAG, "Whisper model loaded: " + result);
@@ -213,6 +219,34 @@ public class VoiceInputManager implements TranscriptionListener {
         synchronized (stateLock) {
             return currentState;
         }
+    }
+
+    /**
+     * Reload whisper model with a different file.
+     * Releases the current model and loads the new one.
+     */
+    public void reloadModel(Context context, String modelFileName) {
+        whisperBridge.release();
+        whisperBridge = new WhisperBridge();
+        whisperBridge.loadModel(context, modelFileName, new WhisperBridge.Callback() {
+            @Override
+            public void onSuccess(String result) {
+                Log.i(TAG, "Model reloaded: " + modelFileName);
+            }
+
+            @Override
+            public void onError(String error) {
+                Log.e(TAG, "Failed to reload model: " + error);
+                VoiceState newState;
+                synchronized (stateLock) {
+                    currentState = VoiceState.ERROR;
+                    newState = VoiceState.ERROR;
+                }
+                overlay.showError("Model load failed: " + error);
+                dispatchStateChange(newState);
+                mainHandler.postDelayed(errorDismissRunnable, ERROR_DISMISS_DELAY_MS);
+            }
+        });
     }
 
     /**

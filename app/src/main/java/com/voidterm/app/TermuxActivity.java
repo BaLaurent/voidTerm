@@ -5,9 +5,13 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
+import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.net.Uri;
 import android.os.Bundle;
+import android.provider.OpenableColumns;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.ContextMenu;
@@ -20,6 +24,10 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
 
 import com.termux.terminal.TerminalSession;
 import com.termux.view.TerminalView;
@@ -410,6 +418,70 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         if (extraKeysConfig != null) {
             extraKeysConfig.onExtraKeyPressed(ExtraKeysConfig.MIC_BUTTON_KEY);
         }
+    }
+
+    @Override
+    public void onSettingsRequested() {
+        new SettingsDialog(this, null).show();
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == SettingsDialog.REQUEST_MODEL_FILE && resultCode == RESULT_OK && data != null) {
+            Uri uri = data.getData();
+            if (uri != null) {
+                onModelFileSelected(uri);
+            }
+        }
+    }
+
+    private void onModelFileSelected(Uri uri) {
+        String filename = getFileNameFromUri(uri);
+        if (filename == null) {
+            Log.e(TAG, "Could not resolve filename from URI");
+            return;
+        }
+
+        File modelsDir = new File(getFilesDir(), "models");
+        if (!modelsDir.exists()) {
+            modelsDir.mkdirs();
+        }
+        File destFile = new File(modelsDir, filename);
+
+        try (InputStream in = getContentResolver().openInputStream(uri);
+             FileOutputStream out = new FileOutputStream(destFile)) {
+            byte[] buf = new byte[8192];
+            int len;
+            while ((len = in.read(buf)) > 0) {
+                out.write(buf, 0, len);
+            }
+            out.flush();
+            Log.i(TAG, "Model file copied: " + destFile.getAbsolutePath());
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to copy model file", e);
+            return;
+        }
+
+        SharedPreferences prefs = getSharedPreferences(SettingsDialog.PREFS_NAME, MODE_PRIVATE);
+        prefs.edit().putString(SettingsDialog.KEY_MODEL_NAME, filename).apply();
+
+        if (voiceInputManager != null) {
+            voiceInputManager.reloadModel(this, filename);
+        }
+    }
+
+    private String getFileNameFromUri(Uri uri) {
+        String name = null;
+        try (Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (index >= 0) {
+                    name = cursor.getString(index);
+                }
+            }
+        }
+        return name;
     }
 
     /**

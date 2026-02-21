@@ -81,7 +81,14 @@ public class WhisperBridge {
 
                 if (!modelFile.exists()) {
                     Log.i(TAG, "Copying model from assets: " + modelFileName);
-                    copyAssetToFile(context, MODELS_DIR + "/" + modelFileName, modelFile);
+                    try {
+                        copyAssetToFile(context, MODELS_DIR + "/" + modelFileName, modelFile);
+                    } catch (IOException e) {
+                        isLoading.set(false);
+                        Log.e(TAG, "Model file not found in assets or filesDir: " + modelFileName);
+                        mainHandler.post(() -> callback.onError("Model file not found: " + modelFileName));
+                        return;
+                    }
                 }
 
                 long handle = nativeInit(modelFile.getAbsolutePath());
@@ -104,10 +111,10 @@ public class WhisperBridge {
                 Log.i(TAG, "Model loaded: " + modelFileName);
                 mainHandler.post(() -> callback.onSuccess("Model loaded"));
 
-            } catch (IOException e) {
+            } catch (Exception e) {
                 isLoading.set(false);
                 Log.e(TAG, "Failed to load model: " + modelFileName, e);
-                mainHandler.post(() -> callback.onError("Failed to copy model: " + e.getMessage()));
+                mainHandler.post(() -> callback.onError("Failed to load model: " + e.getMessage()));
             }
         }, "WhisperBridge-ModelLoad").start();
     }
