@@ -1,0 +1,4 @@
+[submodule "app/src/main/jni/whisper.cpp"]
+	path = app/src/main/jni/whisper.cpp
+	url = https://github.com/ggerganov/whisper.cpp.git
+    branch = v1.7.3

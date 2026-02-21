@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">VoidTerm</string>
+    <string name="recording_label">Recording...</string>
+    <string name="transcribing_label">Transcribing...</string>
+    <string name="btn_send">Send</string>
+    <string name="btn_cancel">Cancel</string>
+</resources>

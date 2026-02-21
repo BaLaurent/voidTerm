@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Quest-optimized display defaults -->
+
+    <!-- Terminal font size: 20sp for readability at Quest viewing distance -->
+    <dimen name="quest_default_font_size">20sp</dimen>
+
+    <!-- Extra keys button height: 150% of standard Termux (standard ~40dp) -->
+    <dimen name="quest_extra_key_height">60dp</dimen>
+
+    <!-- Minimum touch target for Quest controller raycast -->
+    <dimen name="quest_min_touch_target">48dp</dimen>
+
+    <!-- Push-to-Talk default keycode: Quest controller A button (BUTTON_A = 96) -->
+    <integer name="quest_ptt_key_default">96</integer>
+
+    <!-- Double-tap threshold for PTT cancel (milliseconds) -->
+    <integer name="quest_double_tap_threshold">300</integer>
+
+    <!-- Extra keys text size for Quest -->
+    <dimen name="quest_extra_key_text_size">18sp</dimen>
+
+    <!-- Overlay text size -->
+    <dimen name="quest_overlay_text_size">18sp</dimen>
+</resources>

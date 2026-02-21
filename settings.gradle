@@ -1,0 +1,13 @@
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+rootProject.name = 'VoidTerm'
+include ':app'
+include ':terminal-emulator'
+include ':terminal-view'
+include ':termux-shared'
