@@ -26,6 +26,7 @@ public class WhisperBridge {
     private static final String TAG = "WhisperBridge";
     private static final String MODELS_DIR = "models";
     private static final int COPY_BUFFER_SIZE = 8192;
+    private static final long TRANSCRIPTION_TIMEOUT_MS = 30_000;
 
     static {
         System.loadLibrary("whisper_jni");
@@ -36,6 +37,7 @@ public class WhisperBridge {
     private native String nativeTranscribe(long ctx, float[] audio, String lang);
     private native void nativeFree(long ctx);
     private native boolean nativeIsLoaded(long ctx);
+    private native void nativeAbort();
 
     private final Object contextLock = new Object();
     private long contextHandle = 0;
@@ -43,6 +45,7 @@ public class WhisperBridge {
     private final AtomicBoolean isLoading = new AtomicBoolean(false);
     private volatile boolean isDestroyed = false;
     private volatile Thread transcribeThread;
+    private volatile Runnable timeoutRunnable;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     /**
@@ -152,6 +155,17 @@ public class WhisperBridge {
             return;
         }
 
+        Runnable watchdog = () -> {
+            if (isTranscribing.compareAndSet(true, false)) {
+                Log.e(TAG, "Transcription timed out after " + TRANSCRIPTION_TIMEOUT_MS + "ms, aborting native");
+                nativeAbort();
+                if (!isDestroyed) {
+                    callback.onError("Transcription timed out");
+                }
+            }
+        };
+        timeoutRunnable = watchdog;
+
         Thread thread = new Thread(() -> {
             try {
                 Log.i(TAG, "Starting transcription: " + audio.length + " samples, lang=" + language);
@@ -163,7 +177,14 @@ public class WhisperBridge {
                 Log.i(TAG, "Transcription completed in " + elapsed + "ms: " +
                     (result != null ? result.length() : 0) + " chars");
 
-                isTranscribing.set(false);
+                // Cancel watchdog — transcription completed normally
+                mainHandler.removeCallbacks(watchdog);
+
+                if (!isTranscribing.compareAndSet(true, false)) {
+                    // Watchdog already fired — discard this result
+                    Log.w(TAG, "Transcription completed after timeout, discarding result");
+                    return;
+                }
 
                 if (isDestroyed) return;
 
@@ -177,6 +198,7 @@ public class WhisperBridge {
 
             } catch (Exception e) {
                 Log.e(TAG, "Transcription failed", e);
+                mainHandler.removeCallbacks(watchdog);
                 isTranscribing.set(false);
 
                 if (isDestroyed) return;
@@ -187,6 +209,7 @@ public class WhisperBridge {
 
         transcribeThread = thread;
         thread.start();
+        mainHandler.postDelayed(watchdog, TRANSCRIPTION_TIMEOUT_MS);
     }
 
     /**
@@ -206,7 +229,15 @@ public class WhisperBridge {
     public void release() {
         isDestroyed = true;
 
-        // Wait for active transcription to finish before freeing the native context
+        // Cancel any pending timeout watchdog
+        Runnable pending = timeoutRunnable;
+        if (pending != null) {
+            mainHandler.removeCallbacks(pending);
+            timeoutRunnable = null;
+        }
+
+        // Signal native code to abort, then wait for transcription thread to exit
+        nativeAbort();
         Thread thread = transcribeThread;
         if (thread != null && thread.isAlive()) {
             try {

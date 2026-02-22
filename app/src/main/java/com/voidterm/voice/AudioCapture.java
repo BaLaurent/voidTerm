@@ -17,8 +17,9 @@ public class AudioCapture {
     private static final int MAX_DURATION_SECONDS = 30;
     private static final int MAX_SAMPLES = SAMPLE_RATE * MAX_DURATION_SECONDS; // 480,000
     private static final int CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO;
-    private static final int AUDIO_FORMAT = AudioFormat.ENCODING_PCM_FLOAT;
     private static final int READ_CHUNK_SAMPLES = SAMPLE_RATE / 10; // 100ms chunks at 16kHz = 1600
+    // RMS threshold below which audio is considered silence (empirical: ~-60 dBFS)
+    private static final float SILENCE_RMS_THRESHOLD = 0.001f;
 
     private AudioRecord audioRecord;
     private float[] buffer; // allocated per recording, null when idle
@@ -27,6 +28,7 @@ public class AudioCapture {
     private Thread recordingThread;
     private volatile float currentVolumeLevel = 0f;
     private final Object lock = new Object();
+    private int activeAudioFormat; // actual format used (PCM_FLOAT or PCM_16BIT)
 
     /**
      * Start recording audio on a dedicated background thread.
@@ -42,22 +44,30 @@ public class AudioCapture {
                 return true;
             }
 
-            int minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT);
+            // Try PCM_FLOAT first, fall back to PCM_16BIT if unsupported by HAL
+            activeAudioFormat = AudioFormat.ENCODING_PCM_FLOAT;
+            int minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, activeAudioFormat);
             if (minBufferSize == AudioRecord.ERROR || minBufferSize == AudioRecord.ERROR_BAD_VALUE) {
-                Log.e(TAG, "Invalid AudioRecord buffer size: " + minBufferSize);
-                return false;
+                Log.w(TAG, "PCM_FLOAT not supported, falling back to PCM_16BIT");
+                activeAudioFormat = AudioFormat.ENCODING_PCM_16BIT;
+                minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, activeAudioFormat);
+                if (minBufferSize == AudioRecord.ERROR || minBufferSize == AudioRecord.ERROR_BAD_VALUE) {
+                    Log.e(TAG, "Invalid AudioRecord buffer size for PCM_16BIT: " + minBufferSize);
+                    return false;
+                }
             }
 
             // Use at least 2x minimum buffer for smoother recording
-            int bufferSize = Math.max(minBufferSize * 2, SAMPLE_RATE); // at least 1 second
+            int bytesPerSample = (activeAudioFormat == AudioFormat.ENCODING_PCM_FLOAT) ? Float.BYTES : Short.BYTES;
+            int bufferSizeBytes = Math.max(minBufferSize * 2, SAMPLE_RATE * bytesPerSample);
 
             try {
                 audioRecord = new AudioRecord(
                         MediaRecorder.AudioSource.MIC,
                         SAMPLE_RATE,
                         CHANNEL_CONFIG,
-                        AUDIO_FORMAT,
-                        bufferSize * Float.BYTES
+                        activeAudioFormat,
+                        bufferSizeBytes
                 );
             } catch (SecurityException e) {
                 Log.e(TAG, "Microphone permission not granted", e);
@@ -65,11 +75,36 @@ public class AudioCapture {
             }
 
             if (audioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
-                Log.e(TAG, "AudioRecord failed to initialize");
-                audioRecord.release();
-                audioRecord = null;
-                return false;
+                // PCM_FLOAT initialized but HAL may still fail — try PCM_16BIT
+                if (activeAudioFormat == AudioFormat.ENCODING_PCM_FLOAT) {
+                    Log.w(TAG, "PCM_FLOAT AudioRecord init failed, retrying with PCM_16BIT");
+                    audioRecord.release();
+                    activeAudioFormat = AudioFormat.ENCODING_PCM_16BIT;
+                    minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, activeAudioFormat);
+                    bufferSizeBytes = Math.max(minBufferSize * 2, SAMPLE_RATE * Short.BYTES);
+                    try {
+                        audioRecord = new AudioRecord(
+                                MediaRecorder.AudioSource.MIC,
+                                SAMPLE_RATE,
+                                CHANNEL_CONFIG,
+                                activeAudioFormat,
+                                bufferSizeBytes
+                        );
+                    } catch (SecurityException e) {
+                        Log.e(TAG, "Microphone permission not granted", e);
+                        return false;
+                    }
+                }
+                if (audioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
+                    Log.e(TAG, "AudioRecord failed to initialize with both formats");
+                    audioRecord.release();
+                    audioRecord = null;
+                    return false;
+                }
             }
+
+            Log.i(TAG, "AudioRecord using format: " +
+                    (activeAudioFormat == AudioFormat.ENCODING_PCM_FLOAT ? "PCM_FLOAT" : "PCM_16BIT"));
 
             buffer = new float[MAX_SAMPLES];
             samplesRecorded = 0;
@@ -91,6 +126,18 @@ public class AudioCapture {
      * Reads audio data and computes RMS volume.
      */
     private void recordLoop() {
+        if (activeAudioFormat == AudioFormat.ENCODING_PCM_FLOAT) {
+            recordLoopFloat();
+        } else {
+            recordLoopShort();
+        }
+
+        if (samplesRecorded >= MAX_SAMPLES) {
+            Log.i(TAG, "Max recording duration reached (30s)");
+        }
+    }
+
+    private void recordLoopFloat() {
         float[] readBuffer = new float[READ_CHUNK_SAMPLES];
 
         while (isRecording && samplesRecorded < MAX_SAMPLES) {
@@ -108,9 +155,28 @@ public class AudioCapture {
                 break;
             }
         }
+    }
 
-        if (samplesRecorded >= MAX_SAMPLES) {
-            Log.i(TAG, "Max recording duration reached (30s)");
+    private void recordLoopShort() {
+        short[] readBuffer = new short[READ_CHUNK_SAMPLES];
+
+        while (isRecording && samplesRecorded < MAX_SAMPLES) {
+            int remaining = MAX_SAMPLES - samplesRecorded;
+            int toRead = Math.min(readBuffer.length, remaining);
+
+            int read = audioRecord.read(readBuffer, 0, toRead, AudioRecord.READ_BLOCKING);
+
+            if (read > 0) {
+                // Convert PCM_16BIT shorts to float32 for whisper.cpp
+                for (int i = 0; i < read; i++) {
+                    buffer[samplesRecorded + i] = readBuffer[i] / 32768.0f;
+                }
+                samplesRecorded += read;
+                currentVolumeLevel = computeRms(buffer, samplesRecorded - read, read);
+            } else if (read < 0) {
+                Log.e(TAG, "AudioRecord read error: " + read);
+                break;
+            }
         }
     }
 
@@ -119,10 +185,14 @@ public class AudioCapture {
      * @return Normalized volume level 0.0 to 1.0
      */
     private float computeRms(float[] samples, int count) {
+        return computeRms(samples, 0, count);
+    }
+
+    private float computeRms(float[] samples, int offset, int count) {
         if (count == 0) return 0f;
 
         float sumSquares = 0f;
-        for (int i = 0; i < count; i++) {
+        for (int i = offset; i < offset + count; i++) {
             sumSquares += samples[i] * samples[i];
         }
 
@@ -166,17 +236,29 @@ public class AudioCapture {
 
             // Copy only the recorded portion
             int recorded = samplesRecorded;
-            float[] result = new float[recorded];
+            float[] result;
             if (recorded > 0 && buffer != null) {
-                System.arraycopy(buffer, 0, result, 0, recorded);
+                // Check if the entire recording is silence before copying
+                float rms = computeRms(buffer, 0, recorded);
+                if (rms < SILENCE_RMS_THRESHOLD) {
+                    Log.w(TAG, "Recording is silence (RMS=" + String.format("%.6f", rms) +
+                            " < threshold=" + SILENCE_RMS_THRESHOLD + "), returning empty");
+                    result = new float[0];
+                } else {
+                    result = new float[recorded];
+                    System.arraycopy(buffer, 0, result, 0, recorded);
+                    Log.i(TAG, "Recording stopped: " + recorded + " samples (" +
+                            String.format("%.1f", recorded / (float) SAMPLE_RATE) + "s), RMS=" +
+                            String.format("%.4f", rms));
+                }
+            } else {
+                result = new float[0];
+                Log.w(TAG, "Recording stopped: no samples captured");
             }
 
             // Release the large buffer when not recording
             buffer = null;
             currentVolumeLevel = 0f;
-
-            Log.i(TAG, "Recording stopped: " + recorded + " samples (" +
-                    String.format("%.1f", recorded / (float) SAMPLE_RATE) + "s)");
 
             return result;
         }

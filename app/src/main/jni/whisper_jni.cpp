@@ -11,6 +11,14 @@
 // Quest 2 XR2 has 8 cores (4 perf + 4 efficiency); using half avoids starving the system.
 static const int WHISPER_THREAD_COUNT = 4;
 
+// Abort flag for cooperative cancellation of whisper_full() via ggml_abort_callback.
+// Set by nativeAbort(), checked before each ggml computation, reset at transcription start.
+static volatile int g_abort_flag = 0;
+
+static bool whisper_abort_callback(void * /*user_data*/) {
+    return g_abort_flag != 0;
+}
+
 extern "C" {
 
 JNIEXPORT jlong JNICALL
@@ -57,6 +65,9 @@ Java_com_voidterm_voice_WhisperBridge_nativeTranscribe(JNIEnv *env, jobject /* t
 
     const char *lang = env->GetStringUTFChars(language, nullptr);
 
+    // Reset abort flag before each transcription
+    g_abort_flag = 0;
+
     struct whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
     params.print_realtime = false;
     params.print_progress = false;
@@ -65,6 +76,8 @@ Java_com_voidterm_voice_WhisperBridge_nativeTranscribe(JNIEnv *env, jobject /* t
     params.no_timestamps = true;
     params.single_segment = false;
     params.n_threads = WHISPER_THREAD_COUNT;
+    params.abort_callback = whisper_abort_callback;
+    params.abort_callback_user_data = nullptr;
     if (lang) {
         params.language = lang;
     }
@@ -110,6 +123,12 @@ Java_com_voidterm_voice_WhisperBridge_nativeFree(JNIEnv *env, jobject /* this */
 JNIEXPORT jboolean JNICALL
 Java_com_voidterm_voice_WhisperBridge_nativeIsLoaded(JNIEnv *env, jobject /* this */, jlong contextPtr) {
     return contextPtr != 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL
+Java_com_voidterm_voice_WhisperBridge_nativeAbort(JNIEnv * /*env*/, jobject /* this */) {
+    g_abort_flag = 1;
+    LOGI("Abort flag set — whisper_full() will stop at next ggml computation");
 }
 
 } // extern "C"
