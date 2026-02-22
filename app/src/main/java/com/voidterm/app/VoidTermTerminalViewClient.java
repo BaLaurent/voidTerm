@@ -150,7 +150,7 @@ public class VoidTermTerminalViewClient implements TerminalViewClient {
 
     @Override
     public void onEmulatorSet() {
-        // Terminal emulator connected to view
+        TerminalStyleDialog.applySavedStyle(activity, activity.getTerminalView());
     }
 
     @Override

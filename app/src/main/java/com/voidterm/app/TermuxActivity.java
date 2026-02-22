@@ -129,7 +129,7 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         // GameBoy control panel (weight=2, ~40%)
         controlPanel = new GameBoyControlPanel(this);
         controlPanel.setControlPanelListener(this);
-        controlPanel.setBackgroundColor(0xFFC4C4B4);
+        controlPanel.setBackgroundColor(InterfaceTheme.current(this).background);
         rootLayout.addView(controlPanel, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 2f));
 
@@ -223,7 +223,6 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
 
             terminalView.attachSession(terminalSession);
             sessionClient.setSession(terminalSession);
-            TerminalStyleDialog.applySavedStyle(this, terminalView);
 
             Log.i(TAG, "Terminal session started: shell=" + shell + " home=" + home);
         } catch (Exception e) {
@@ -482,7 +481,7 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
 
     @Override
     public void onSettingsRequested() {
-        new SettingsDialog(this, null, () -> controlPanel.enterEditMode()).show();
+        new SettingsDialog(this, this::reloadCurrentModel, () -> controlPanel.enterEditMode()).show();
     }
 
     @Override
@@ -528,6 +527,14 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
 
         if (voiceInputManager != null) {
             voiceInputManager.reloadModel(this, filename);
+        }
+    }
+
+    private void reloadCurrentModel() {
+        if (voiceInputManager != null) {
+            SharedPreferences prefs = getSharedPreferences(SettingsDialog.PREFS_NAME, MODE_PRIVATE);
+            String modelName = prefs.getString(SettingsDialog.KEY_MODEL_NAME, SettingsDialog.DEFAULT_MODEL);
+            voiceInputManager.reloadModel(this, modelName);
         }
     }
 
@@ -586,6 +593,47 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
 
     public CompactToolbar getCompactToolbar() {
         return compactToolbar;
+    }
+
+    /**
+     * Recreate both control panels with the current theme.
+     * Called from SettingsDialog after theme selection changes.
+     */
+    public void applyTheme() {
+        // Save state
+        boolean controlPanelVisible = controlPanel.getVisibility() == View.VISIBLE;
+        int controlPanelIndex = rootLayout.indexOfChild(controlPanel);
+        LinearLayout.LayoutParams controlPanelLp =
+                (LinearLayout.LayoutParams) controlPanel.getLayoutParams();
+
+        int compactToolbarIndex = rootLayout.indexOfChild(compactToolbar);
+        LinearLayout.LayoutParams compactToolbarLp =
+                (LinearLayout.LayoutParams) compactToolbar.getLayoutParams();
+        boolean compactToolbarVisible = compactToolbar.getVisibility() == View.VISIBLE;
+
+        // Remove old
+        rootLayout.removeView(controlPanel);
+        rootLayout.removeView(compactToolbar);
+
+        // Recreate (constructors read the current theme)
+        controlPanel = new GameBoyControlPanel(this);
+        controlPanel.setControlPanelListener(this);
+        controlPanel.setBackgroundColor(InterfaceTheme.current(this).background);
+        controlPanel.setVisibility(controlPanelVisible ? View.VISIBLE : View.GONE);
+
+        compactToolbar = new CompactToolbar(this);
+        compactToolbar.setControlPanelListener(this);
+        compactToolbar.setVisibility(compactToolbarVisible ? View.VISIBLE : View.GONE);
+
+        // Re-insert at same positions
+        int insertIndex = Math.min(controlPanelIndex, compactToolbarIndex);
+        if (controlPanelIndex < compactToolbarIndex) {
+            rootLayout.addView(controlPanel, insertIndex, controlPanelLp);
+            rootLayout.addView(compactToolbar, insertIndex + 1, compactToolbarLp);
+        } else {
+            rootLayout.addView(compactToolbar, insertIndex, compactToolbarLp);
+            rootLayout.addView(controlPanel, insertIndex + 1, controlPanelLp);
+        }
     }
 
     private void onKeyboardVisibilityChanged(boolean visible) {
