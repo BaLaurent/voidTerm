@@ -25,6 +25,7 @@ public class AudioCapture {
     private float[] buffer; // allocated per recording, null when idle
     private volatile int samplesRecorded = 0;
     private volatile boolean isRecording = false;
+    private volatile boolean recordingStopped = false;
     private Thread recordingThread;
     private volatile float currentVolumeLevel = 0f;
     private final Object lock = new Object();
@@ -79,6 +80,7 @@ public class AudioCapture {
                 if (activeAudioFormat == AudioFormat.ENCODING_PCM_FLOAT) {
                     Log.w(TAG, "PCM_FLOAT AudioRecord init failed, retrying with PCM_16BIT");
                     audioRecord.release();
+                    audioRecord = null;
                     activeAudioFormat = AudioFormat.ENCODING_PCM_16BIT;
                     minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, activeAudioFormat);
                     bufferSizeBytes = Math.max(minBufferSize * 2, SAMPLE_RATE * Short.BYTES);
@@ -109,6 +111,7 @@ public class AudioCapture {
             buffer = new float[MAX_SAMPLES];
             samplesRecorded = 0;
             currentVolumeLevel = 0f;
+            recordingStopped = false;
             isRecording = true;
 
             audioRecord.startRecording();
@@ -229,6 +232,7 @@ public class AudioCapture {
             if (audioRecord != null) {
                 try {
                     audioRecord.stop();
+                    recordingStopped = true;
                 } catch (IllegalStateException e) {
                     Log.w(TAG, "AudioRecord stop failed", e);
                 }
@@ -296,11 +300,14 @@ public class AudioCapture {
                 }
             }
             if (audioRecord != null) {
-                try {
-                    audioRecord.stop();
-                } catch (IllegalStateException e) {
-                    // Already stopped
+                if (!recordingStopped) {
+                    try {
+                        audioRecord.stop();
+                    } catch (IllegalStateException e) {
+                        // Already stopped
+                    }
                 }
+                recordingStopped = false;
                 audioRecord.release();
                 audioRecord = null;
             }

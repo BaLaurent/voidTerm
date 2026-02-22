@@ -436,6 +436,17 @@ public class GameBoyControlPanel extends FrameLayout {
         return col;
     }
 
+    public int getCurrentMacroPage() {
+        return currentPage;
+    }
+
+    public void setCurrentMacroPage(int page) {
+        if (page >= 0 && page < MacroStore.PAGE_COUNT) {
+            currentPage = page;
+            updateMacroPage();
+        }
+    }
+
     private void updateMacroPage() {
         for (int i = 0; i < MacroStore.PAGE_SIZE; i++) {
             macroButtons[i].setText(macros[currentPage * MacroStore.PAGE_SIZE + i][0]);
@@ -625,6 +636,16 @@ public class GameBoyControlPanel extends FrameLayout {
         return shiftActive;
     }
 
+    public void setCtrlActive(boolean active) {
+        ctrlActive = active;
+        if (ctrlButton != null) updateButtonColor(ctrlButton, ctrlActive);
+    }
+
+    public void setShiftActive(boolean active) {
+        shiftActive = active;
+        if (shiftButton != null) updateButtonColor(shiftButton, shiftActive);
+    }
+
     public void resetCtrl() {
         ctrlActive = false;
         if (ctrlButton != null) updateButtonColor(ctrlButton, false);
@@ -654,7 +675,27 @@ public class GameBoyControlPanel extends FrameLayout {
         btn.setBackground(makeButtonDrawable(bgColor, size, pill));
 
         btn.setStateListAnimator(null);
+        btn.setContentDescription(descriptionForLabel(label));
         return btn;
+    }
+
+    private static String descriptionForLabel(String label) {
+        switch (label) {
+            case "\u25B2": return "Up arrow";
+            case "\u25BC": return "Down arrow";
+            case "\u25C0": return "Left arrow";
+            case "\u25B6": return "Right arrow";
+            case "\u21B5": return "Enter";
+            case "\uD83C\uDFA4": return "Voice input";
+            case "\u2630": return "Menu";
+            case "CTL": return "Control modifier";
+            case "SHF": return "Shift modifier";
+            case "ESC": return "Escape";
+            case "TAB": return "Tab";
+            case "S-TAB": return "Shift Tab";
+            case "S-\u21B5": return "Shift Enter";
+            default: return label;
+        }
     }
 
     private StateListDrawable makeButtonDrawable(int bgColor, int size, boolean pill) {

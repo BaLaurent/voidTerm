@@ -63,6 +63,8 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
     private GameBoyControlPanel controlPanel;
     private CompactToolbar compactToolbar;
     private boolean keyboardVisible = false;
+    private ViewTreeObserver.OnGlobalLayoutListener layoutListener;
+    private final Rect visibleDisplayRect = new Rect();
 
     private TermuxBootstrapInstaller bootstrapInstaller;
     private LinearLayout rootLayout;
@@ -75,11 +77,15 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Global crash handler
+        // Global crash handler — chain to previous handler so Android crash dialog still works
+        Thread.UncaughtExceptionHandler previousHandler = Thread.getDefaultUncaughtExceptionHandler();
         Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
             Log.e(TAG, "UNCAUGHT EXCEPTION", throwable);
             if (diagnosticLog != null) {
                 diagnosticLog.error("CRASH", "Uncaught exception on thread " + thread.getName(), throwable);
+            }
+            if (previousHandler != null) {
+                previousHandler.uncaughtException(thread, throwable);
             }
         });
 
@@ -145,10 +151,9 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         setContentView(rootLayout);
 
         // Keyboard visibility detection via layout height change
-        rootLayout.getViewTreeObserver().addOnGlobalLayoutListener(() -> {
-            Rect r = new Rect();
-            rootLayout.getWindowVisibleDisplayFrame(r);
-            int heightDiff = rootLayout.getRootView().getHeight() - r.height();
+        layoutListener = () -> {
+            rootLayout.getWindowVisibleDisplayFrame(visibleDisplayRect);
+            int heightDiff = rootLayout.getRootView().getHeight() - visibleDisplayRect.height();
             int threshold = (int) TypedValue.applyDimension(
                     TypedValue.COMPLEX_UNIT_DIP, 150, getResources().getDisplayMetrics());
             boolean isKeyboardNow = heightDiff > threshold;
@@ -156,7 +161,8 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
                 keyboardVisible = isKeyboardNow;
                 onKeyboardVisibilityChanged(isKeyboardNow);
             }
-        });
+        };
+        rootLayout.getViewTreeObserver().addOnGlobalLayoutListener(layoutListener);
 
         // Apply initial panel visibility (respects fullscreen mode preference)
         updatePanelVisibility();
@@ -652,9 +658,15 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         SharedPreferences prefs = getSharedPreferences(SettingsDialog.PREFS_NAME, MODE_PRIVATE);
         boolean fullscreen = prefs.getBoolean(SettingsDialog.KEY_FULLSCREEN_MODE, false);
 
+        boolean showingGameBoy = controlPanel.getVisibility() == View.VISIBLE;
+        boolean showingCompact = compactToolbar.getVisibility() == View.VISIBLE;
+
         if (fullscreen) {
-            compactToolbar.setCtrlActive(controlPanel.isCtrlActive());
-            compactToolbar.setShiftActive(controlPanel.isShiftActive());
+            if (showingGameBoy) {
+                compactToolbar.setCtrlActive(controlPanel.isCtrlActive());
+                compactToolbar.setShiftActive(controlPanel.isShiftActive());
+                compactToolbar.setCurrentMacroPage(controlPanel.getCurrentMacroPage());
+            }
             controlPanel.setVisibility(View.GONE);
             compactToolbar.setVisibility(View.VISIBLE);
             return;
@@ -662,11 +674,19 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
 
         boolean toolbarEnabled = prefs.getBoolean(SettingsDialog.KEY_COMPACT_TOOLBAR, true);
         if (keyboardVisible && toolbarEnabled) {
-            compactToolbar.setCtrlActive(controlPanel.isCtrlActive());
-            compactToolbar.setShiftActive(controlPanel.isShiftActive());
+            if (showingGameBoy) {
+                compactToolbar.setCtrlActive(controlPanel.isCtrlActive());
+                compactToolbar.setShiftActive(controlPanel.isShiftActive());
+                compactToolbar.setCurrentMacroPage(controlPanel.getCurrentMacroPage());
+            }
             controlPanel.setVisibility(View.GONE);
             compactToolbar.setVisibility(View.VISIBLE);
         } else {
+            if (showingCompact) {
+                controlPanel.setCtrlActive(compactToolbar.isCtrlActive());
+                controlPanel.setShiftActive(compactToolbar.isShiftActive());
+                controlPanel.setCurrentMacroPage(compactToolbar.getCurrentMacroPage());
+            }
             compactToolbar.setVisibility(View.GONE);
             controlPanel.setVisibility(View.VISIBLE);
         }
@@ -758,8 +778,27 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
     }
 
     @Override
+    protected void onPause() {
+        super.onPause();
+        if (voiceInputManager != null) {
+            VoiceState state = voiceInputManager.getCurrentState();
+            if (state == VoiceState.RECORDING) {
+                voiceInputManager.onDoubleTap();
+            }
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+    }
+
+    @Override
     protected void onDestroy() {
         super.onDestroy();
+        if (rootLayout != null && layoutListener != null) {
+            rootLayout.getViewTreeObserver().removeOnGlobalLayoutListener(layoutListener);
+        }
         if (voiceInputManager != null) {
             voiceInputManager.destroy();
             voiceInputManager = null;

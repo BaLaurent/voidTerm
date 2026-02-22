@@ -10,6 +10,7 @@ import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
+import android.text.InputFilter;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -180,6 +181,7 @@ public class SettingsDialog {
         promptField.setHint("Domain terms, names...");
         promptField.setTextSize(14);
         promptField.setSingleLine(true);
+        promptField.setFilters(new InputFilter[]{new InputFilter.LengthFilter(500)});
         promptField.setText(prefs.getString(KEY_WHISPER_INITIAL_PROMPT, ""));
         layout.addView(promptField);
 

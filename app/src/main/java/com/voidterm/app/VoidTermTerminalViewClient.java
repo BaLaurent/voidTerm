@@ -14,13 +14,36 @@ import com.termux.view.TerminalViewClient;
  * Implements TerminalViewClient for VoidTerm.
  * Handles terminal view callbacks including key events, gestures, and Quest input.
  */
-public class VoidTermTerminalViewClient implements TerminalViewClient {
+public class VoidTermTerminalViewClient implements TerminalViewClient,
+        SharedPreferences.OnSharedPreferenceChangeListener {
 
     private static final String TAG = "VoidTermViewClient";
     private final TermuxActivity activity;
 
+    private volatile boolean tapToggleKeyboard = true;
+    private volatile String backKeyBehavior = SettingsDialog.BACK_ESCAPE;
+
     public VoidTermTerminalViewClient(TermuxActivity activity) {
         this.activity = activity;
+        SharedPreferences prefs = activity.getSharedPreferences(
+                SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE);
+        tapToggleKeyboard = prefs.getBoolean(SettingsDialog.KEY_TAP_TOGGLE_KEYBOARD, true);
+        backKeyBehavior = prefs.getString(SettingsDialog.KEY_BACK_BEHAVIOR, SettingsDialog.BACK_ESCAPE);
+        prefs.registerOnSharedPreferenceChangeListener(this);
+    }
+
+    @Override
+    public void onSharedPreferenceChanged(SharedPreferences prefs, String key) {
+        if (SettingsDialog.KEY_TAP_TOGGLE_KEYBOARD.equals(key)) {
+            tapToggleKeyboard = prefs.getBoolean(SettingsDialog.KEY_TAP_TOGGLE_KEYBOARD, true);
+        } else if (SettingsDialog.KEY_BACK_BEHAVIOR.equals(key)) {
+            backKeyBehavior = prefs.getString(SettingsDialog.KEY_BACK_BEHAVIOR, SettingsDialog.BACK_ESCAPE);
+        }
+    }
+
+    public void release() {
+        activity.getSharedPreferences(SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE)
+                .unregisterOnSharedPreferenceChangeListener(this);
     }
 
     @Override
@@ -38,9 +61,7 @@ public class VoidTermTerminalViewClient implements TerminalViewClient {
 
     @Override
     public boolean onSingleTapUp(MotionEvent e) {
-        SharedPreferences prefs = activity.getSharedPreferences(
-                SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE);
-        if (!prefs.getBoolean(SettingsDialog.KEY_TAP_TOGGLE_KEYBOARD, true)) {
+        if (!tapToggleKeyboard) {
             return false;
         }
         // Toggle soft keyboard on tap — toggleSoftInput is more reliable than
@@ -54,10 +75,7 @@ public class VoidTermTerminalViewClient implements TerminalViewClient {
 
     @Override
     public boolean shouldBackButtonBeMappedToEscape() {
-        SharedPreferences prefs = activity.getSharedPreferences(
-                SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE);
-        return SettingsDialog.BACK_ESCAPE.equals(
-                prefs.getString(SettingsDialog.KEY_BACK_BEHAVIOR, SettingsDialog.BACK_ESCAPE));
+        return SettingsDialog.BACK_ESCAPE.equals(backKeyBehavior);
     }
 
     @Override

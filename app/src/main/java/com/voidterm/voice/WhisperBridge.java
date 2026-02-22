@@ -303,7 +303,10 @@ public class WhisperBridge {
                     return;
                 }
 
-                if (isDestroyed) return;
+                if (isDestroyed) {
+                    mainHandler.post(() -> callback.onError("WhisperBridge destroyed during transcription"));
+                    return;
+                }
 
                 mainHandler.post(() -> {
                     if (result == null) {
@@ -323,7 +326,10 @@ public class WhisperBridge {
                 mainHandler.removeCallbacks(watchdog);
                 isTranscribing.set(false);
 
-                if (isDestroyed) return;
+                if (isDestroyed) {
+                    mainHandler.post(() -> callback.onError("WhisperBridge destroyed during transcription"));
+                    return;
+                }
 
                 mainHandler.post(() -> callback.onError("Transcription error: " + e.getMessage()));
             }
@@ -408,6 +414,11 @@ public class WhisperBridge {
             }
         }
         transcribeThread = null;
+
+        if (thread != null && thread.isAlive()) {
+            Log.w(TAG, "Transcription thread still alive after join — skipping nativeFree to avoid use-after-free");
+            return;
+        }
 
         synchronized (contextLock) {
             if (contextHandle != 0) {

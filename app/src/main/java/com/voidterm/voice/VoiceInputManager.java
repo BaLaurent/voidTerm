@@ -194,43 +194,62 @@ public class VoiceInputManager implements TranscriptionListener {
         // immediately so the UI can show "Transcribing..." without waiting for the
         // recording thread join (~50-100ms).
         new Thread(() -> {
-            float[] pcmData = audioCapture.stopRecording();
-            float audioDurationSec = pcmData != null ? pcmData.length / 16000f : 0f;
-            long transcribeStart = System.currentTimeMillis();
-            whisperBridge.transcribe(pcmData, config, new WhisperBridge.Callback() {
-                @Override
-                public void onSuccess(String text) {
-                    long processingTimeMs = System.currentTimeMillis() - transcribeStart;
-                    VoiceState newState = null;
-                    synchronized (stateLock) {
-                        if (currentState != VoiceState.TRANSCRIBING) {
-                            Log.w(TAG, "Transcription success received in " + currentState + " state, discarding");
-                            return;
+            try {
+                float[] pcmData = audioCapture.stopRecording();
+                float audioDurationSec = pcmData != null ? pcmData.length / 16000f : 0f;
+                long transcribeStart = System.currentTimeMillis();
+                whisperBridge.transcribe(pcmData, config, new WhisperBridge.Callback() {
+                    @Override
+                    public void onSuccess(String text) {
+                        long processingTimeMs = System.currentTimeMillis() - transcribeStart;
+                        VoiceState newState = null;
+                        synchronized (stateLock) {
+                            if (currentState != VoiceState.TRANSCRIBING) {
+                                Log.w(TAG, "Transcription success received in " + currentState + " state, discarding");
+                                return;
+                            }
+                            currentState = VoiceState.SHOWING_RESULT;
+                            newState = VoiceState.SHOWING_RESULT;
                         }
-                        currentState = VoiceState.SHOWING_RESULT;
-                        newState = VoiceState.SHOWING_RESULT;
+                        overlay.showTranscription(text, audioDurationSec, processingTimeMs);
+                        dispatchStateChange(newState);
                     }
-                    overlay.showTranscription(text, audioDurationSec, processingTimeMs);
-                    dispatchStateChange(newState);
-                }
 
-                @Override
-                public void onError(String error) {
-                    VoiceState newState = null;
-                    synchronized (stateLock) {
-                        if (currentState != VoiceState.TRANSCRIBING) {
-                            Log.w(TAG, "Transcription error received in " + currentState + " state, discarding: " + error);
-                            return;
+                    @Override
+                    public void onError(String error) {
+                        VoiceState newState = null;
+                        synchronized (stateLock) {
+                            if (currentState != VoiceState.TRANSCRIBING) {
+                                Log.w(TAG, "Transcription error received in " + currentState + " state, discarding: " + error);
+                                return;
+                            }
+                            currentState = VoiceState.ERROR;
+                            newState = VoiceState.ERROR;
                         }
-                        currentState = VoiceState.ERROR;
-                        newState = VoiceState.ERROR;
+                        String logs = whisperBridge.getAndClearLogs();
+                        overlay.showError(error, logs);
+                        dispatchStateChange(newState);
+                        // No auto-dismiss when logs are available — user dismisses manually
                     }
-                    String logs = whisperBridge.getAndClearLogs();
-                    overlay.showError(error, logs);
-                    dispatchStateChange(newState);
-                    // No auto-dismiss when logs are available — user dismisses manually
+                });
+            } catch (Exception e) {
+                Log.e(TAG, "Pipeline thread failed", e);
+                try {
+                    audioCapture.stopRecording();
+                } catch (Exception stopEx) {
+                    Log.w(TAG, "Failed to stop recording during error recovery", stopEx);
                 }
-            });
+                VoiceState errorState;
+                synchronized (stateLock) {
+                    currentState = VoiceState.ERROR;
+                    errorState = VoiceState.ERROR;
+                }
+                mainHandler.post(() -> {
+                    overlay.showError("Voice pipeline error: " + e.getMessage());
+                    dispatchStateChange(errorState);
+                    mainHandler.postDelayed(errorDismissRunnable, ERROR_DISMISS_DELAY_MS);
+                });
+            }
         }, "VoiceInput-Pipeline").start();
     }
 

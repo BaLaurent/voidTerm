@@ -2,6 +2,7 @@ package com.voidterm.app;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.util.Log;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -13,6 +14,7 @@ import org.json.JSONObject;
  */
 public class MacroStore {
 
+    private static final String TAG = "MacroStore";
     public static final int MACRO_COUNT = 12;
     public static final int PAGE_SIZE = 4;
     public static final int PAGE_COUNT = 3;
@@ -66,7 +68,8 @@ public class MacroStore {
                     save(context, result);
                     return result;
                 }
-            } catch (Exception ignored) {
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to load macros", e);
             }
         }
         // Return defaults
@@ -89,7 +92,8 @@ public class MacroStore {
             }
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .edit().putString(PREFS_KEY, arr.toString()).apply();
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to save macros", e);
         }
     }
 }

@@ -46,6 +46,9 @@ public class CompactToolbar extends FrameLayout {
     private int currentMacroPage = 0;
     private Button macroPageButton;
 
+    private Runnable activeRepeatRunnable;
+    private View activeRepeatView;
+
     public CompactToolbar(Context context) {
         super(context);
         theme = InterfaceTheme.current(context);
@@ -230,6 +233,17 @@ public class CompactToolbar extends FrameLayout {
         updateMacroPage();
     }
 
+    public int getCurrentMacroPage() {
+        return currentMacroPage;
+    }
+
+    public void setCurrentMacroPage(int page) {
+        if (page >= 0 && page < MacroStore.PAGE_COUNT) {
+            currentMacroPage = page;
+            updateMacroPage();
+        }
+    }
+
     private void updateMacroPage() {
         for (int i = 0; i < MacroStore.PAGE_SIZE; i++) {
             macroButtons[i].setText(macros[currentMacroPage * MacroStore.PAGE_SIZE + i][0]);
@@ -317,7 +331,25 @@ public class CompactToolbar extends FrameLayout {
         btn.setMinimumHeight(0);
         btn.setBackground(makeButtonDrawable(bgColor));
         btn.setStateListAnimator(null);
+        btn.setContentDescription(descriptionForLabel(label));
         return btn;
+    }
+
+    private static String descriptionForLabel(String label) {
+        switch (label) {
+            case "\u25B2": return "Up arrow";
+            case "\u25BC": return "Down arrow";
+            case "\u25C0": return "Left arrow";
+            case "\u25B6": return "Right arrow";
+            case "\u21B5": return "Enter";
+            case "\uD83C\uDFA4": return "Voice input";
+            case "\u2630": return "Menu";
+            case "CTL": return "Control modifier";
+            case "SHF": return "Shift modifier";
+            case "ESC": return "Escape";
+            case "TAB": return "Tab";
+            default: return label;
+        }
     }
 
     private StateListDrawable makeButtonDrawable(int bgColor) {
@@ -348,7 +380,8 @@ public class CompactToolbar extends FrameLayout {
                     if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
                     if (listener != null) listener.onSendToTerminal(escSeq);
                     v.setPressed(true);
-                    v.postDelayed(new Runnable() {
+                    cancelRepeat();
+                    Runnable repeat = new Runnable() {
                         @Override
                         public void run() {
                             if (v.isPressed()) {
@@ -356,15 +389,33 @@ public class CompactToolbar extends FrameLayout {
                                 v.postDelayed(this, 100);
                             }
                         }
-                    }, 400);
+                    };
+                    activeRepeatRunnable = repeat;
+                    activeRepeatView = v;
+                    v.postDelayed(repeat, 400);
                     return true;
                 case MotionEvent.ACTION_UP:
                 case MotionEvent.ACTION_CANCEL:
                     v.setPressed(false);
+                    cancelRepeat();
                     return true;
             }
             return false;
         });
+    }
+
+    private void cancelRepeat() {
+        if (activeRepeatRunnable != null && activeRepeatView != null) {
+            activeRepeatView.removeCallbacks(activeRepeatRunnable);
+        }
+        activeRepeatRunnable = null;
+        activeRepeatView = null;
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        super.onDetachedFromWindow();
+        cancelRepeat();
     }
 
     private void updateModifierButtonColor(Button btn, boolean active) {
