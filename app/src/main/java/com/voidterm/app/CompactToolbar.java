@@ -140,6 +140,11 @@ public class CompactToolbar extends FrameLayout {
             if (listener != null) listener.onVoiceToggle();
         });
 
+        // Burger menu (settings)
+        addToolbarButton(mainRow, context, "\u2630", theme.macro, v -> {
+            if (listener != null) listener.onSettingsRequested();
+        });
+
         addView(mainRow, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
