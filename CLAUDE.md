@@ -53,7 +53,7 @@ User confirms (Enter) → VoiceInputCallback.onVoiceTextReady() → Terminal PTY
 | `com.voidterm.contracts` | Shared interfaces: `VoiceState`, `VoiceInputCallback`, `TranscriptionListener` |
 | `com.voidterm.voice` | Voice system: `VoiceInputManager`, `AudioCapture`, `WhisperBridge`, `TranscriptionOverlay` |
 | `com.voidterm.input` | Controller mapping: `QuestInputHandler` |
-| `com.voidterm.app` | Activity, UI, styling: `TermuxActivity`, `GameBoyControlPanel`, `TerminalStyleDialog`, `SettingsDialog`, `ExtraKeysConfig` |
+| `com.voidterm.app` | Activity, UI, styling: `TermuxActivity`, `GameBoyControlPanel`, `CompactToolbar`, `MacroExecutor`, `MacroEditDialog`, `TerminalStyleDialog`, `SettingsDialog`, `ExtraKeysConfig` |
 
 ### JNI Layer
 
@@ -81,6 +81,16 @@ Changes to files in `com.voidterm.contracts` affect the entire voice pipeline. `
 ### GameBoy Control Panel
 
 `GameBoyControlPanel` provides a touchscreen control panel styled like a Game Boy. Includes D-pad, modifier keys (Ctrl, Shift, Esc), Tab/S-Tab, Enter/S-Enter, macro buttons, and a burger menu button (☰). Communicates with `TermuxActivity` via `ControlPanelListener` interface (`onSendToTerminal`, `onVoiceToggle`, `onSettingsRequested`). Key codes: Enter sends `\r` (submit), S-Enter sends `\n` (newline without submit), TAB sends `\t` (respects SHF state for backtab), S-TAB sends `\033[Z` (backtab).
+
+### Macro System
+
+Macros are user-configurable buttons on `GameBoyControlPanel` (4 buttons) and `CompactToolbar` (swipeable page). Edited via long-press → `MacroEditDialog`. Persisted in `SharedPreferences` ("voidterm_macros").
+
+`MacroExecutor` parses and executes macro commands. Two modes:
+- **Plain text** (no `{`): sends text + `\r` (backward compatible)
+- **Key combinations** (contains `{`): parses `{tag}` syntax into terminal escape sequences
+
+Supported tags: `{esc}`, `{enter}`, `{tab}`, `{up}`, `{down}`, `{left}`, `{right}`, `{home}`, `{end}`, `{f1}`-`{f12}`, `{ctrl+a}`-`{ctrl+z}`, `{shift+KEY}`, `{alt+KEY}`, `{wait:N}` (delay ms). Escaped braces: `{{` → `{`, `}}` → `}`.
 
 ### Settings & Model Selection
 
