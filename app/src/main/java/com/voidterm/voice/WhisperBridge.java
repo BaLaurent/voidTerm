@@ -72,7 +72,8 @@ public class WhisperBridge {
     private native String nativeTranscribe(long ctx, float[] audio, String lang, int nThreads,
                                               boolean translate, String initialPrompt,
                                               float temperature, boolean useBeamSearch,
-                                              int beamSize, boolean suppressNonSpeech);
+                                              int beamSize, boolean suppressNonSpeech,
+                                              boolean proportionalContext);
     private native void nativeFree(long ctx);
     private native boolean nativeIsLoaded(long ctx);
     private native void nativeAbort();
@@ -287,7 +288,8 @@ public class WhisperBridge {
                         ? config.initialPrompt : null;
                 String result = nativeTranscribe(handle, audio, config.language, threadCount,
                         config.translate, prompt, config.temperature,
-                        config.useBeamSearch, config.beamSize, config.suppressNonSpeech);
+                        config.useBeamSearch, config.beamSize, config.suppressNonSpeech,
+                        config.useProportionalContext);
 
                 long elapsed = System.currentTimeMillis() - startTime;
                 bufLog("nativeTranscribe returned in " + elapsed + "ms, result="

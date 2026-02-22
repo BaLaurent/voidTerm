@@ -9,7 +9,6 @@ set(CMAKE_CXX_STANDARD 17)
 # dispatch infrastructure (GGML_BACKEND_SHARED, GGML_USE_CPU defines, etc.)
 # which caused ~100x compute slowdown on Quest 2/XR2.
 set(WHISPER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/whisper.cpp)
-
 set(GGML_SOURCES
     ${WHISPER_DIR}/ggml/src/ggml.c
     ${WHISPER_DIR}/ggml/src/ggml-alloc.c
@@ -24,6 +23,12 @@ set(GGML_SOURCES
     ${WHISPER_DIR}/ggml/src/ggml-cpu/ggml-cpu-quants.c
     ${WHISPER_DIR}/ggml/src/ggml-cpu/ggml-cpu-traits.cpp
 )
+
+# NOTE: Vulkan backend (ggml-vulkan.cpp) is NOT compiled.
+# ggml-vulkan.cpp calls exit(1) on any Vulkan error, which kills the whole
+# Android process. It also conflicts with Android's HWUI RenderThread Vulkan
+# usage, causing SIGSEGV in the UI render thread. Until whisper.cpp upstream
+# handles Vulkan errors gracefully on Android, we stay CPU-only.
 
 set(WHISPER_SOURCES
     ${WHISPER_DIR}/src/whisper.cpp

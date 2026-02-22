@@ -37,14 +37,7 @@ public class GameBoyControlPanel extends FrameLayout {
 
     private static final String TAG = "GameBoyControlPanel";
 
-    // GameBoy DMG-01 color palette
-    private static final int COLOR_DPAD        = 0xFF2B2B2B; // D-pad charcoal
-    private static final int COLOR_DPAD_CROSS  = 0xFF1A1A1A; // D-pad cross cavity
-    private static final int COLOR_PRIMARY     = 0xFF9B2257; // A/B wine-red
-    private static final int COLOR_MODIFIER    = 0xFF3C3C6E; // Navy modifier
-    private static final int COLOR_MACRO       = 0xFF585858; // Start/Select gray
-    private static final int COLOR_ACTIVE      = 0xFF9BBC0F; // GameBoy screen green
-
+    private final InterfaceTheme theme;
     private ControlPanelListener listener;
     private final Button[] macroButtons = new Button[4];
     private String[][] macros; // [i][0]=label, [i][1]=cmd
@@ -67,6 +60,7 @@ public class GameBoyControlPanel extends FrameLayout {
 
     public GameBoyControlPanel(Context context) {
         super(context);
+        theme = InterfaceTheme.current(context);
         macros = MacroStore.load(context);
         Map<String, float[]> positions = LayoutStore.load(context);
         if (positions != null) {
@@ -265,7 +259,7 @@ public class GameBoyControlPanel extends FrameLayout {
     // --- Button creation helpers (shared by buildLayout and buildCustomLayout) ---
 
     private Button createMenuButton(Context ctx) {
-        Button btn = makeButton(ctx, dp(36), "\u2630", 16f, COLOR_MACRO, true);
+        Button btn = makeButton(ctx, dp(36), "\u2630", 16f, theme.macro, true);
         btn.setPadding(dp(24), 0, dp(24), 0);
         btn.setMinWidth(dp(80));
         btn.setOnClickListener(v -> {
@@ -277,7 +271,7 @@ public class GameBoyControlPanel extends FrameLayout {
     }
 
     private Button createPageButton(Context ctx) {
-        pageButton = makeButton(ctx, dp(24), "1/3", 8f, COLOR_MACRO, true);
+        pageButton = makeButton(ctx, dp(24), "1/3", 8f, theme.macro, true);
         pageButton.setPadding(dp(8), 0, dp(8), 0);
         pageButton.setMinWidth(dp(36));
         pageButton.setOnClickListener(v -> {
@@ -291,7 +285,7 @@ public class GameBoyControlPanel extends FrameLayout {
 
     private Button createMacroButton(Context ctx, int index) {
         int actualIndex = currentPage * MacroStore.PAGE_SIZE + index;
-        Button btn = makeButton(ctx, dp(32), macros[actualIndex][0], 10f, COLOR_MACRO, true);
+        Button btn = makeButton(ctx, dp(32), macros[actualIndex][0], 10f, theme.macro, true);
         btn.setPadding(dp(12), 0, dp(12), 0);
         btn.setMinWidth(dp(40));
         btn.setOnClickListener(v -> {
@@ -320,7 +314,7 @@ public class GameBoyControlPanel extends FrameLayout {
     }
 
     private Button createEscButton(Context ctx) {
-        Button btn = makeButton(ctx, dp(40), "ESC", 9f, COLOR_MODIFIER, false);
+        Button btn = makeButton(ctx, dp(40), "ESC", 9f, theme.modifier, false);
         btn.setOnClickListener(v -> {
             if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             if (listener != null) listener.onSendToTerminal("\033");
@@ -330,7 +324,7 @@ public class GameBoyControlPanel extends FrameLayout {
     }
 
     private Button createCtrlButton(Context ctx) {
-        ctrlButton = makeButton(ctx, dp(40), "CTL", 9f, COLOR_MODIFIER, false);
+        ctrlButton = makeButton(ctx, dp(40), "CTL", 9f, theme.modifier, false);
         ctrlButton.setOnClickListener(v -> {
             if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             ctrlActive = !ctrlActive;
@@ -341,7 +335,7 @@ public class GameBoyControlPanel extends FrameLayout {
     }
 
     private Button createShiftButton(Context ctx) {
-        shiftButton = makeButton(ctx, dp(40), "SHF", 9f, COLOR_MODIFIER, false);
+        shiftButton = makeButton(ctx, dp(40), "SHF", 9f, theme.modifier, false);
         shiftButton.setOnClickListener(v -> {
             if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             shiftActive = !shiftActive;
@@ -352,7 +346,7 @@ public class GameBoyControlPanel extends FrameLayout {
     }
 
     private Button createSttButton(Context ctx) {
-        Button btn = makeButton(ctx, dp(52), "\uD83C\uDFA4", 18f, COLOR_DPAD, false);
+        Button btn = makeButton(ctx, dp(52), "\uD83C\uDFA4", 18f, theme.dpad, false);
         btn.setOnClickListener(v -> {
             if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             if (listener != null) listener.onVoiceToggle();
@@ -362,14 +356,14 @@ public class GameBoyControlPanel extends FrameLayout {
     }
 
     private Button createArrowButton(Context ctx, String name, String label, String escSeq) {
-        Button btn = makeButton(ctx, dp(48), label, 14f, COLOR_DPAD, false);
+        Button btn = makeButton(ctx, dp(48), label, 14f, theme.dpad, false);
         setupArrowRepeat(btn, escSeq);
         buttonRegistry.put(name, btn);
         return btn;
     }
 
     private Button createSTabButton(Context ctx) {
-        Button btn = makeButton(ctx, dp(40), "S-TAB", 8f, COLOR_MODIFIER, false);
+        Button btn = makeButton(ctx, dp(40), "S-TAB", 8f, theme.modifier, false);
         btn.setOnClickListener(v -> {
             if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             if (listener != null) listener.onSendToTerminal("\033[Z");
@@ -379,7 +373,7 @@ public class GameBoyControlPanel extends FrameLayout {
     }
 
     private Button createTabButton(Context ctx) {
-        Button btn = makeButton(ctx, dp(48), "TAB", 10f, COLOR_PRIMARY, false);
+        Button btn = makeButton(ctx, dp(48), "TAB", 10f, theme.primary, false);
         btn.setOnClickListener(v -> {
             if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             if (listener != null) {
@@ -396,7 +390,7 @@ public class GameBoyControlPanel extends FrameLayout {
     }
 
     private Button createEnterButton(Context ctx) {
-        Button btn = makeButton(ctx, dp(52), "\u21B5", 18f, COLOR_PRIMARY, false);
+        Button btn = makeButton(ctx, dp(52), "\u21B5", 18f, theme.primary, false);
         btn.setOnClickListener(v -> {
             if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             if (listener != null) listener.onSendToTerminal("\r");
@@ -406,7 +400,7 @@ public class GameBoyControlPanel extends FrameLayout {
     }
 
     private Button createSEnterButton(Context ctx) {
-        Button btn = makeButton(ctx, dp(40), "S-\u21B5", 8f, COLOR_MODIFIER, false);
+        Button btn = makeButton(ctx, dp(40), "S-\u21B5", 8f, theme.modifier, false);
         btn.setOnClickListener(v -> {
             if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             if (listener != null) listener.onSendToTerminal("\n");
@@ -461,7 +455,7 @@ public class GameBoyControlPanel extends FrameLayout {
         GradientDrawable hBg = new GradientDrawable();
         hBg.setShape(GradientDrawable.RECTANGLE);
         hBg.setCornerRadius(dp(6));
-        hBg.setColor(COLOR_DPAD_CROSS);
+        hBg.setColor(theme.cross);
         hBar.setBackground(hBg);
         RelativeLayout.LayoutParams hLp = new RelativeLayout.LayoutParams(dp(148), arrowSize);
         hLp.addRule(RelativeLayout.CENTER_IN_PARENT);
@@ -471,7 +465,7 @@ public class GameBoyControlPanel extends FrameLayout {
         GradientDrawable vBg = new GradientDrawable();
         vBg.setShape(GradientDrawable.RECTANGLE);
         vBg.setCornerRadius(dp(6));
-        vBg.setColor(COLOR_DPAD_CROSS);
+        vBg.setColor(theme.cross);
         vBar.setBackground(vBg);
         RelativeLayout.LayoutParams vLp = new RelativeLayout.LayoutParams(arrowSize, dp(148));
         vLp.addRule(RelativeLayout.CENTER_IN_PARENT);
@@ -617,7 +611,7 @@ public class GameBoyControlPanel extends FrameLayout {
     }
 
     private void updateButtonColor(Button btn, boolean active) {
-        int color = active ? COLOR_ACTIVE : COLOR_MODIFIER;
+        int color = active ? theme.active : theme.modifier;
         btn.setBackground(makeButtonDrawable(color, 0, false));
     }
 
@@ -667,14 +661,14 @@ public class GameBoyControlPanel extends FrameLayout {
         // Normal state: convex (light top → dark bottom)
         GradientDrawable normal = makeGradientShape(bgColor, size, pill);
         normal.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM);
-        normal.setColors(new int[]{lightenColor(bgColor, 1.4f), darkenColor(bgColor, 0.85f)});
-        normal.setStroke(dp(2), darkenColor(bgColor, 0.55f));
+        normal.setColors(new int[]{InterfaceTheme.lightenColor(bgColor, 1.4f), InterfaceTheme.darkenColor(bgColor, 0.85f)});
+        normal.setStroke(dp(2), InterfaceTheme.darkenColor(bgColor, 0.55f));
 
         // Pressed state: concave (dark top → dark bottom, pushed-in look)
         GradientDrawable pressed = makeGradientShape(bgColor, size, pill);
         pressed.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM);
-        pressed.setColors(new int[]{darkenColor(bgColor, 0.6f), darkenColor(bgColor, 0.8f)});
-        pressed.setStroke(dp(2), darkenColor(bgColor, 0.4f));
+        pressed.setColors(new int[]{InterfaceTheme.darkenColor(bgColor, 0.6f), InterfaceTheme.darkenColor(bgColor, 0.8f)});
+        pressed.setStroke(dp(2), InterfaceTheme.darkenColor(bgColor, 0.4f));
 
         StateListDrawable stateList = new StateListDrawable();
         stateList.addState(new int[]{android.R.attr.state_pressed}, pressed);
@@ -691,20 +685,6 @@ public class GameBoyControlPanel extends FrameLayout {
             shape.setShape(GradientDrawable.OVAL);
         }
         return shape;
-    }
-
-    private int darkenColor(int color, float factor) {
-        int r = (int) (Color.red(color) * factor);
-        int g = (int) (Color.green(color) * factor);
-        int b = (int) (Color.blue(color) * factor);
-        return Color.argb(Color.alpha(color), r, g, b);
-    }
-
-    private int lightenColor(int color, float factor) {
-        int r = Math.min(255, (int) (Color.red(color) * factor));
-        int g = Math.min(255, (int) (Color.green(color) * factor));
-        int b = Math.min(255, (int) (Color.blue(color) * factor));
-        return Color.argb(Color.alpha(color), r, g, b);
     }
 
     private LinearLayout.LayoutParams weightParams(float weight) {

@@ -2,7 +2,7 @@ package com.voidterm.voice;
 
 /**
  * Immutable configuration for whisper.cpp transcription parameters.
- * Built from SharedPreferences at each transcription call so changes apply immediately.
+ * Cached in VoiceInputManager and invalidated on SharedPreferences change.
  */
 public class WhisperConfig {
     public final String language;
@@ -13,10 +13,12 @@ public class WhisperConfig {
     public final int beamSize;
     public final int threadCount;
     public final boolean suppressNonSpeech;
+    public final boolean useProportionalContext;
 
     public WhisperConfig(String language, boolean translate, String initialPrompt,
                          float temperature, boolean useBeamSearch, int beamSize,
-                         int threadCount, boolean suppressNonSpeech) {
+                         int threadCount, boolean suppressNonSpeech,
+                         boolean useProportionalContext) {
         this.language = language;
         this.translate = translate;
         this.initialPrompt = initialPrompt;
@@ -25,5 +27,6 @@ public class WhisperConfig {
         this.beamSize = beamSize;
         this.threadCount = threadCount;
         this.suppressNonSpeech = suppressNonSpeech;
+        this.useProportionalContext = useProportionalContext;
     }
 }

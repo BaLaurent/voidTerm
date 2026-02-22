@@ -35,6 +35,7 @@ public class TranscriptionOverlay extends FrameLayout {
     private TextView loadingPhaseText;
     private View errorContainer;
     private TextView errorText;
+    private TextView statsText;
     private View errorButtons;
     private Button copyLogsButton;
     private Button dismissErrorButton;
@@ -66,6 +67,7 @@ public class TranscriptionOverlay extends FrameLayout {
         transcriptionText = findViewById(R.id.transcription_text);
         sendButton = findViewById(R.id.btn_send);
         cancelButton = findViewById(R.id.btn_cancel);
+        statsText = findViewById(R.id.stats_text);
         errorContainer = findViewById(R.id.error_container);
         errorText = findViewById(R.id.error_text);
         errorButtons = findViewById(R.id.error_buttons);
@@ -145,6 +147,9 @@ public class TranscriptionOverlay extends FrameLayout {
         transcribingContainer.setVisibility(GONE);
         resultContainer.setVisibility(GONE);
         errorContainer.setVisibility(GONE);
+        if (statsText != null && state != VoiceState.SHOWING_RESULT && state != VoiceState.EDITING) {
+            statsText.setVisibility(GONE);
+        }
 
         switch (state) {
             case LOADING:
@@ -210,11 +215,27 @@ public class TranscriptionOverlay extends FrameLayout {
     }
 
     /**
-     * Show transcription text in the result area.
+     * Show transcription text in the result area with processing stats.
+     *
+     * @param text Transcribed text
+     * @param audioDurationSec Duration of recorded audio in seconds
+     * @param processingTimeMs Time taken by whisper.cpp to transcribe in milliseconds
      */
-    public void showTranscription(String text) {
+    public void showTranscription(String text, float audioDurationSec, long processingTimeMs) {
         if (transcriptionText != null) {
             transcriptionText.setText(text);
+        }
+        if (statsText != null) {
+            float processingSec = processingTimeMs / 1000f;
+            String speedRatio = audioDurationSec > 0
+                    ? String.format("%.1fx", audioDurationSec / processingSec)
+                    : "";
+            String stats = String.format("%.1fs audio \u00b7 %.1fs process", audioDurationSec, processingSec);
+            if (!speedRatio.isEmpty()) {
+                stats += " \u00b7 " + speedRatio;
+            }
+            statsText.setText(stats);
+            statsText.setVisibility(VISIBLE);
         }
     }
 

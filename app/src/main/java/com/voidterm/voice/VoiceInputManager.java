@@ -6,6 +6,10 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
+
 import com.voidterm.contracts.TranscriptionListener;
 import com.voidterm.contracts.VoiceInputCallback;
 import com.voidterm.contracts.VoiceState;
@@ -51,6 +55,23 @@ public class VoiceInputManager implements TranscriptionListener {
     private final Object stateLock = new Object();
     private VoiceState currentState = VoiceState.IDLE;
 
+    // Cached WhisperConfig — avoids 8 SharedPreferences reads per transcription
+    private volatile WhisperConfig cachedConfig;
+
+    private static final Set<String> WHISPER_CONFIG_KEYS = new HashSet<>(Arrays.asList(
+            "whisper_language", "whisper_translate", "whisper_initial_prompt",
+            "whisper_temperature", "whisper_beam_search", "whisper_beam_size",
+            "whisper_thread_override", "whisper_suppress_non_speech",
+            "whisper_proportional_context"
+    ));
+
+    private final SharedPreferences.OnSharedPreferenceChangeListener configInvalidator =
+            (prefs, key) -> {
+                if (WHISPER_CONFIG_KEYS.contains(key)) {
+                    cachedConfig = null;
+                }
+            };
+
     private final Runnable volumePollRunnable = new Runnable() {
         @Override
         public void run() {
@@ -90,6 +111,9 @@ public class VoiceInputManager implements TranscriptionListener {
         overlay.setTranscriptionListener(this);
 
         SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        prefs.registerOnSharedPreferenceChangeListener(configInvalidator);
+        cachedConfig = readWhisperConfig(prefs);
+
         String modelName = prefs.getString(KEY_MODEL_NAME, DEFAULT_MODEL);
         boolean useGpu = prefs.getBoolean(KEY_USE_GPU, false);
 
@@ -163,42 +187,51 @@ public class VoiceInputManager implements TranscriptionListener {
         }
         dispatchStateChange(newState);
 
-        // Blocking call OUTSIDE stateLock to avoid holding lock during thread join
-        float[] pcmData = audioCapture.stopRecording();
+        // Snapshot config before spawning thread (volatile read)
+        WhisperConfig config = buildWhisperConfig();
 
-        whisperBridge.transcribe(pcmData, buildWhisperConfig(), new WhisperBridge.Callback() {
-            @Override
-            public void onSuccess(String text) {
-                VoiceState newState = null;
-                synchronized (stateLock) {
-                    if (currentState != VoiceState.TRANSCRIBING) {
-                        Log.w(TAG, "Transcription success received in " + currentState + " state, discarding");
-                        return;
+        // Move stopRecording + transcribe off main thread — the main thread returns
+        // immediately so the UI can show "Transcribing..." without waiting for the
+        // recording thread join (~50-100ms).
+        new Thread(() -> {
+            float[] pcmData = audioCapture.stopRecording();
+            float audioDurationSec = pcmData != null ? pcmData.length / 16000f : 0f;
+            long transcribeStart = System.currentTimeMillis();
+            whisperBridge.transcribe(pcmData, config, new WhisperBridge.Callback() {
+                @Override
+                public void onSuccess(String text) {
+                    long processingTimeMs = System.currentTimeMillis() - transcribeStart;
+                    VoiceState newState = null;
+                    synchronized (stateLock) {
+                        if (currentState != VoiceState.TRANSCRIBING) {
+                            Log.w(TAG, "Transcription success received in " + currentState + " state, discarding");
+                            return;
+                        }
+                        currentState = VoiceState.SHOWING_RESULT;
+                        newState = VoiceState.SHOWING_RESULT;
                     }
-                    currentState = VoiceState.SHOWING_RESULT;
-                    newState = VoiceState.SHOWING_RESULT;
+                    overlay.showTranscription(text, audioDurationSec, processingTimeMs);
+                    dispatchStateChange(newState);
                 }
-                overlay.showTranscription(text);
-                dispatchStateChange(newState);
-            }
 
-            @Override
-            public void onError(String error) {
-                VoiceState newState = null;
-                synchronized (stateLock) {
-                    if (currentState != VoiceState.TRANSCRIBING) {
-                        Log.w(TAG, "Transcription error received in " + currentState + " state, discarding: " + error);
-                        return;
+                @Override
+                public void onError(String error) {
+                    VoiceState newState = null;
+                    synchronized (stateLock) {
+                        if (currentState != VoiceState.TRANSCRIBING) {
+                            Log.w(TAG, "Transcription error received in " + currentState + " state, discarding: " + error);
+                            return;
+                        }
+                        currentState = VoiceState.ERROR;
+                        newState = VoiceState.ERROR;
                     }
-                    currentState = VoiceState.ERROR;
-                    newState = VoiceState.ERROR;
+                    String logs = whisperBridge.getAndClearLogs();
+                    overlay.showError(error, logs);
+                    dispatchStateChange(newState);
+                    // No auto-dismiss when logs are available — user dismisses manually
                 }
-                String logs = whisperBridge.getAndClearLogs();
-                overlay.showError(error, logs);
-                dispatchStateChange(newState);
-                // No auto-dismiss when logs are available — user dismisses manually
-            }
-        });
+            });
+        }, "VoiceInput-Pipeline").start();
     }
 
     /**
@@ -246,7 +279,16 @@ public class VoiceInputManager implements TranscriptionListener {
     }
 
     private WhisperConfig buildWhisperConfig() {
+        WhisperConfig config = cachedConfig;
+        if (config != null) return config;
+
         SharedPreferences prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        config = readWhisperConfig(prefs);
+        cachedConfig = config;
+        return config;
+    }
+
+    private static WhisperConfig readWhisperConfig(SharedPreferences prefs) {
         return new WhisperConfig(
                 prefs.getString("whisper_language", "en"),
                 prefs.getBoolean("whisper_translate", false),
@@ -255,7 +297,8 @@ public class VoiceInputManager implements TranscriptionListener {
                 prefs.getBoolean("whisper_beam_search", false),
                 prefs.getInt("whisper_beam_size", 5),
                 prefs.getInt("whisper_thread_override", 0),
-                prefs.getBoolean("whisper_suppress_non_speech", false)
+                prefs.getBoolean("whisper_suppress_non_speech", false),
+                prefs.getBoolean("whisper_proportional_context", false)
         );
     }
 
@@ -298,6 +341,8 @@ public class VoiceInputManager implements TranscriptionListener {
     public void destroy() {
         mainHandler.removeCallbacks(volumePollRunnable);
         mainHandler.removeCallbacks(errorDismissRunnable);
+        appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .unregisterOnSharedPreferenceChangeListener(configInvalidator);
         audioCapture.release();
         whisperBridge.release();
         Log.i(TAG, "VoiceInputManager destroyed");

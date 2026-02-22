@@ -23,13 +23,9 @@ import android.widget.LinearLayout;
  */
 public class CompactToolbar extends FrameLayout {
 
-    private static final int COLOR_DPAD     = 0xFF2B2B2B;
-    private static final int COLOR_PRIMARY  = 0xFF9B2257;
-    private static final int COLOR_MODIFIER = 0xFF3C3C6E;
-    private static final int COLOR_MACRO    = 0xFF585858;
-    private static final int COLOR_ACTIVE   = 0xFF9BBC0F;
-
     private static final int SWIPE_THRESHOLD_DP = 60;
+
+    private final InterfaceTheme theme;
 
     private GameBoyControlPanel.ControlPanelListener listener;
     private boolean ctrlActive;
@@ -52,7 +48,8 @@ public class CompactToolbar extends FrameLayout {
 
     public CompactToolbar(Context context) {
         super(context);
-        setBackgroundColor(0xFFC4C4B4);
+        theme = InterfaceTheme.current(context);
+        setBackgroundColor(theme.background);
         macros = MacroStore.load(context);
         buildMainRow(context);
         buildMacroRow(context);
@@ -72,12 +69,12 @@ public class CompactToolbar extends FrameLayout {
         mainRow.setPadding(pad, pad, pad, pad);
 
         // ESC
-        addToolbarButton(mainRow, context, "ESC", COLOR_MODIFIER, v -> {
+        addToolbarButton(mainRow, context, "ESC", theme.modifier, v -> {
             if (listener != null) listener.onSendToTerminal("\033");
         });
 
         // CTL (sticky toggle)
-        ctrlButton = makeButton(context, "CTL", COLOR_MODIFIER);
+        ctrlButton = makeButton(context, "CTL", theme.modifier);
         ctrlButton.setOnClickListener(v -> {
             if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             ctrlActive = !ctrlActive;
@@ -86,7 +83,7 @@ public class CompactToolbar extends FrameLayout {
         mainRow.addView(ctrlButton, buttonParams());
 
         // SHF (sticky toggle)
-        shiftButton = makeButton(context, "SHF", COLOR_MODIFIER);
+        shiftButton = makeButton(context, "SHF", theme.modifier);
         shiftButton.setOnClickListener(v -> {
             if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             shiftActive = !shiftActive;
@@ -95,7 +92,7 @@ public class CompactToolbar extends FrameLayout {
         mainRow.addView(shiftButton, buttonParams());
 
         // TAB (respects shift for backtab)
-        addToolbarButton(mainRow, context, "TAB", COLOR_PRIMARY, v -> {
+        addToolbarButton(mainRow, context, "TAB", theme.primary, v -> {
             if (listener != null) {
                 if (shiftActive) {
                     listener.onSendToTerminal("\033[Z");
@@ -107,27 +104,27 @@ public class CompactToolbar extends FrameLayout {
         });
 
         // Left arrow (with repeat)
-        Button left = makeButton(context, "\u25C0", COLOR_DPAD);
+        Button left = makeButton(context, "\u25C0", theme.dpad);
         setupArrowRepeat(left, "\033[D");
         mainRow.addView(left, buttonParams());
 
         // Up arrow (with repeat)
-        Button up = makeButton(context, "\u25B2", COLOR_DPAD);
+        Button up = makeButton(context, "\u25B2", theme.dpad);
         setupArrowRepeat(up, "\033[A");
         mainRow.addView(up, buttonParams());
 
         // Down arrow (with repeat)
-        Button down = makeButton(context, "\u25BC", COLOR_DPAD);
+        Button down = makeButton(context, "\u25BC", theme.dpad);
         setupArrowRepeat(down, "\033[B");
         mainRow.addView(down, buttonParams());
 
         // Right arrow (with repeat)
-        Button right = makeButton(context, "\u25B6", COLOR_DPAD);
+        Button right = makeButton(context, "\u25B6", theme.dpad);
         setupArrowRepeat(right, "\033[C");
         mainRow.addView(right, buttonParams());
 
         // Enter (respects shift for newline without submit)
-        addToolbarButton(mainRow, context, "\u21B5", COLOR_PRIMARY, v -> {
+        addToolbarButton(mainRow, context, "\u21B5", theme.primary, v -> {
             if (listener != null) {
                 if (shiftActive) {
                     listener.onSendToTerminal("\n");
@@ -139,7 +136,7 @@ public class CompactToolbar extends FrameLayout {
         });
 
         // STT (voice)
-        addToolbarButton(mainRow, context, "\uD83C\uDFA4", COLOR_DPAD, v -> {
+        addToolbarButton(mainRow, context, "\uD83C\uDFA4", theme.dpad, v -> {
             if (listener != null) listener.onVoiceToggle();
         });
 
@@ -157,7 +154,7 @@ public class CompactToolbar extends FrameLayout {
         macroRow.setVisibility(View.GONE);
 
         // Back button
-        addToolbarButton(macroRow, context, "\u25C0", COLOR_DPAD, v -> {
+        addToolbarButton(macroRow, context, "\u25C0", theme.dpad, v -> {
             if (currentMacroPage > 0) {
                 currentMacroPage--;
                 updateMacroPage();
@@ -167,7 +164,7 @@ public class CompactToolbar extends FrameLayout {
         });
 
         // Page indicator button
-        macroPageButton = makeButton(context, "1/" + MacroStore.PAGE_COUNT, COLOR_DPAD);
+        macroPageButton = makeButton(context, "1/" + MacroStore.PAGE_COUNT, theme.dpad);
         macroPageButton.setOnClickListener(v -> {
             if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             currentMacroPage = (currentMacroPage + 1) % MacroStore.PAGE_COUNT;
@@ -177,7 +174,7 @@ public class CompactToolbar extends FrameLayout {
 
         // 4 macro buttons
         for (int i = 0; i < 4; i++) {
-            Button btn = makeButton(context, macros[currentMacroPage * MacroStore.PAGE_SIZE + i][0], COLOR_MACRO);
+            Button btn = makeButton(context, macros[currentMacroPage * MacroStore.PAGE_SIZE + i][0], theme.macro);
             final int index = i;
             btn.setOnClickListener(v -> {
                 if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
@@ -323,15 +320,15 @@ public class CompactToolbar extends FrameLayout {
         normal.setShape(GradientDrawable.RECTANGLE);
         normal.setCornerRadius(dp(6));
         normal.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM);
-        normal.setColors(new int[]{lightenColor(bgColor, 1.4f), darkenColor(bgColor, 0.85f)});
-        normal.setStroke(dp(1), darkenColor(bgColor, 0.55f));
+        normal.setColors(new int[]{InterfaceTheme.lightenColor(bgColor, 1.4f), InterfaceTheme.darkenColor(bgColor, 0.85f)});
+        normal.setStroke(dp(1), InterfaceTheme.darkenColor(bgColor, 0.55f));
 
         GradientDrawable pressed = new GradientDrawable();
         pressed.setShape(GradientDrawable.RECTANGLE);
         pressed.setCornerRadius(dp(6));
         pressed.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM);
-        pressed.setColors(new int[]{darkenColor(bgColor, 0.6f), darkenColor(bgColor, 0.8f)});
-        pressed.setStroke(dp(1), darkenColor(bgColor, 0.4f));
+        pressed.setColors(new int[]{InterfaceTheme.darkenColor(bgColor, 0.6f), InterfaceTheme.darkenColor(bgColor, 0.8f)});
+        pressed.setStroke(dp(1), InterfaceTheme.darkenColor(bgColor, 0.4f));
 
         StateListDrawable stateList = new StateListDrawable();
         stateList.addState(new int[]{android.R.attr.state_pressed}, pressed);
@@ -366,7 +363,7 @@ public class CompactToolbar extends FrameLayout {
     }
 
     private void updateModifierButtonColor(Button btn, boolean active) {
-        btn.setBackground(makeButtonDrawable(active ? COLOR_ACTIVE : COLOR_MODIFIER));
+        btn.setBackground(makeButtonDrawable(active ? theme.active : theme.modifier));
     }
 
     // --- Modifier state API ---
@@ -400,20 +397,6 @@ public class CompactToolbar extends FrameLayout {
     }
 
     // --- Utility ---
-
-    private int darkenColor(int color, float factor) {
-        int r = (int) (Color.red(color) * factor);
-        int g = (int) (Color.green(color) * factor);
-        int b = (int) (Color.blue(color) * factor);
-        return Color.argb(Color.alpha(color), r, g, b);
-    }
-
-    private int lightenColor(int color, float factor) {
-        int r = Math.min(255, (int) (Color.red(color) * factor));
-        int g = Math.min(255, (int) (Color.green(color) * factor));
-        int b = Math.min(255, (int) (Color.blue(color) * factor));
-        return Color.argb(Color.alpha(color), r, g, b);
-    }
 
     private int dp(int value) {
         return (int) TypedValue.applyDimension(

@@ -38,6 +38,7 @@ public class SettingsDialog {
     static final String KEY_WHISPER_BEAM_SIZE = "whisper_beam_size";
     static final String KEY_WHISPER_THREAD_OVERRIDE = "whisper_thread_override";
     static final String KEY_WHISPER_SUPPRESS_NON_SPEECH = "whisper_suppress_non_speech";
+    static final String KEY_WHISPER_PROPORTIONAL_CONTEXT = "whisper_proportional_context";
     static final String BACK_ESCAPE = "escape";
     static final String BACK_TOGGLE_KEYBOARD = "toggle_keyboard";
     static final String BACK_MACRO = "macro";
@@ -66,12 +67,12 @@ public class SettingsDialog {
     };
 
     private final Activity activity;
-    private final Runnable onBrowseAction;
+    private final Runnable onModelReloadNeeded;
     private final Runnable onLayoutEditAction;
 
-    public SettingsDialog(Activity activity, Runnable onBrowseAction, Runnable onLayoutEditAction) {
+    public SettingsDialog(Activity activity, Runnable onModelReloadNeeded, Runnable onLayoutEditAction) {
         this.activity = activity;
-        this.onBrowseAction = onBrowseAction;
+        this.onModelReloadNeeded = onModelReloadNeeded;
         this.onLayoutEditAction = onLayoutEditAction;
     }
 
@@ -106,6 +107,10 @@ public class SettingsDialog {
         browseBtn.setAllCaps(false);
         browseBtn.setTextSize(14);
         layout.addView(browseBtn);
+
+        // NOTE: GPU toggle removed — ggml-vulkan.cpp calls exit(1) on Vulkan errors
+        // and conflicts with Android's HWUI RenderThread, causing SIGSEGV.
+        // Re-enable when whisper.cpp upstream supports Android Vulkan gracefully.
 
         // Section: Transcription
         TextView transLabel = new TextView(activity);
@@ -273,6 +278,15 @@ public class SettingsDialog {
         threadRow.addView(threadSpinner);
         advancedContainer.addView(threadRow);
 
+        // Proportional audio context (experimental)
+        CheckBox proportionalToggle = new CheckBox(activity);
+        proportionalToggle.setText("Proportional audio context (experimental)");
+        proportionalToggle.setTextSize(14);
+        proportionalToggle.setChecked(prefs.getBoolean(KEY_WHISPER_PROPORTIONAL_CONTEXT, false));
+        proportionalToggle.setOnCheckedChangeListener((btn, checked) ->
+                prefs.edit().putBoolean(KEY_WHISPER_PROPORTIONAL_CONTEXT, checked).apply());
+        advancedContainer.addView(proportionalToggle);
+
         layout.addView(advancedContainer);
 
         // Section: Interface
@@ -281,6 +295,32 @@ public class SettingsDialog {
         interfaceLabel.setTextSize(16);
         interfaceLabel.setPadding(0, 32, 0, 8);
         layout.addView(interfaceLabel);
+
+        // Theme spinner
+        InterfaceTheme[] themes = InterfaceTheme.values();
+        String[] themeLabels = new String[themes.length];
+        for (int i = 0; i < themes.length; i++) themeLabels[i] = themes[i].label;
+        InterfaceTheme currentTheme = InterfaceTheme.current(activity);
+
+        Spinner themeSpinner = new Spinner(activity);
+        ArrayAdapter<String> themeAdapter = new ArrayAdapter<>(activity,
+                android.R.layout.simple_spinner_item, themeLabels);
+        themeAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        themeSpinner.setAdapter(themeAdapter);
+        themeSpinner.setSelection(currentTheme.ordinal());
+        themeSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int pos, long id) {
+                InterfaceTheme selected = themes[pos];
+                if (selected != InterfaceTheme.current(activity)) {
+                    InterfaceTheme.save(activity, selected);
+                    ((TermuxActivity) activity).applyTheme();
+                }
+            }
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {}
+        });
+        layout.addView(themeSpinner);
 
         CheckBox toolbarToggle = new CheckBox(activity);
         toolbarToggle.setText("Compact toolbar above keyboard");
@@ -305,14 +345,6 @@ public class SettingsDialog {
         hapticToggle.setOnCheckedChangeListener((btn, checked) ->
                 prefs.edit().putBoolean(KEY_HAPTIC_FEEDBACK, checked).apply());
         layout.addView(hapticToggle);
-
-        CheckBox gpuToggle = new CheckBox(activity);
-        gpuToggle.setText("Use GPU acceleration");
-        gpuToggle.setTextSize(14);
-        gpuToggle.setChecked(prefs.getBoolean(KEY_USE_GPU, false));
-        gpuToggle.setOnCheckedChangeListener((btn, checked) ->
-                prefs.edit().putBoolean(KEY_USE_GPU, checked).apply());
-        layout.addView(gpuToggle);
 
         Button customLayoutBtn = new Button(activity);
         customLayoutBtn.setText("Customize Layout");

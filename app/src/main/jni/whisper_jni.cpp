@@ -1,6 +1,6 @@
 #include <jni.h>
 #include <string>
-#include <cstring>
+#include <cmath>
 #include <android/log.h>
 #include "whisper.h"
 #include "ggml-backend.h"
@@ -21,11 +21,14 @@ static bool whisper_abort_callback(void * /*user_data*/) {
     return false;
 }
 
+#ifndef NDEBUG
 // Progress callback to trace encoder progress (called by whisper_full during encoding).
+// Debug-only: each __android_log_print is a synchronous syscall.
 static void voidterm_progress_cb(struct whisper_context * /*ctx*/, struct whisper_state * /*state*/,
                                   int progress, void * /*user_data*/) {
     LOGI("whisper progress: %d%%", progress);
 }
+#endif
 
 extern "C" {
 
@@ -60,7 +63,8 @@ Java_com_voidterm_voice_WhisperBridge_nativeTranscribe(JNIEnv *env, jobject /* t
                                                        jstring language, jint nThreads,
                                                        jboolean translate, jstring initialPrompt,
                                                        jfloat temperature, jboolean useBeamSearch,
-                                                       jint beamSize, jboolean suppressNonSpeech) {
+                                                       jint beamSize, jboolean suppressNonSpeech,
+                                                       jboolean proportionalContext) {
     if (contextPtr == 0) {
         LOGE("Whisper context is null");
         return nullptr;
@@ -68,12 +72,17 @@ Java_com_voidterm_voice_WhisperBridge_nativeTranscribe(JNIEnv *env, jobject /* t
 
     struct whisper_context *ctx = reinterpret_cast<struct whisper_context *>(contextPtr);
 
-    jfloat *audio = env->GetFloatArrayElements(audioData, nullptr);
     jsize audioLength = env->GetArrayLength(audioData);
+    if (audioLength == 0) {
+        LOGE("Audio data is empty");
+        return nullptr;
+    }
 
-    if (!audio || audioLength == 0) {
-        LOGE("Audio data is null or empty");
-        if (audio) env->ReleaseFloatArrayElements(audioData, audio, JNI_ABORT);
+    // GetPrimitiveArrayCritical avoids copying the array — returns a direct pointer
+    // to JVM heap memory. Safe here because whisper_full() makes no JNI callbacks.
+    jfloat *audio = (jfloat *)env->GetPrimitiveArrayCritical(audioData, nullptr);
+    if (!audio) {
+        LOGE("Failed to get audio array");
         return nullptr;
     }
 
@@ -96,16 +105,21 @@ Java_com_voidterm_voice_WhisperBridge_nativeTranscribe(JNIEnv *env, jobject /* t
     params.print_timestamps = false;
     params.print_special    = false;
     params.no_timestamps    = true;
-    params.single_segment   = false;
+    params.single_segment   = true;   // PTT audio is short — one segment is always enough
     params.no_context       = true;   // match official example
     params.offset_ms        = 0;
     params.n_threads = nThreads > 0 ? nThreads : 4;
     params.abort_callback = whisper_abort_callback;
     params.abort_callback_user_data = nullptr;
+#ifndef NDEBUG
     params.progress_callback = voidterm_progress_cb;
     params.progress_callback_user_data = nullptr;
+#endif
     params.translate = translate;
     params.temperature = temperature;
+    params.temperature_inc = 0.0f;    // disable retry at higher temperatures — PTT audio is clear
+    params.entropy_thold   = 0.0f;    // disable "failed decode" detection (no fallbacks anyway)
+    params.logprob_thold   = 0.0f;
     params.suppress_non_speech_tokens = suppressNonSpeech;
 
     if (useBeamSearch) {
@@ -122,9 +136,18 @@ Java_com_voidterm_voice_WhisperBridge_nativeTranscribe(JNIEnv *env, jobject /* t
         params.language = lang;
     }
 
-    LOGI(">>> whisper_full() ENTER: %d samples (%.1fs), lang=%s, n_threads=%d, translate=%d, beam=%d, temp=%.2f",
+    // Proportional audio context: only encode mel frames covering actual audio length
+    // instead of the full 30s (1500 frames). Dramatically reduces encoder time for short PTT.
+    if (proportionalContext) {
+        // 320 = WHISPER_HOP_LENGTH (160) * encoder stride (2)
+        // +16 frames padding for safety
+        int needed = (int)ceil((double)audioLength / 320.0) + 16;
+        params.audio_ctx = (needed < 1500) ? needed : 1500;
+    }
+
+    LOGI(">>> whisper_full() ENTER: %d samples (%.1fs), lang=%s, n_threads=%d, translate=%d, beam=%d, temp=%.2f, audio_ctx=%d",
          audioLength, audioLength / 16000.0f, lang ? lang : "auto", params.n_threads,
-         (int)translate, (int)useBeamSearch, temperature);
+         (int)translate, (int)useBeamSearch, temperature, params.audio_ctx);
 
     whisper_reset_timings(ctx);  // match official example
 
@@ -132,7 +155,7 @@ Java_com_voidterm_voice_WhisperBridge_nativeTranscribe(JNIEnv *env, jobject /* t
 
     LOGI("<<< whisper_full() EXIT: result=%d", result);
 
-    env->ReleaseFloatArrayElements(audioData, audio, JNI_ABORT);
+    env->ReleasePrimitiveArrayCritical(audioData, audio, JNI_ABORT);
     if (lang) env->ReleaseStringUTFChars(language, lang);
     if (prompt) env->ReleaseStringUTFChars(initialPrompt, prompt);
 
@@ -141,11 +164,14 @@ Java_com_voidterm_voice_WhisperBridge_nativeTranscribe(JNIEnv *env, jobject /* t
         return nullptr;
     }
 
-    // Print encoder/decoder/sampling timings to logcat (same as official example)
+#ifndef NDEBUG
+    // Print encoder/decoder/sampling timings to logcat (debug only — each log is a syscall)
     whisper_print_timings(ctx);
+#endif
 
     int numSegments = whisper_full_n_segments(ctx);
     std::string transcription;
+    transcription.reserve(256);
 
     for (int i = 0; i < numSegments; i++) {
         const char *segmentText = whisper_full_get_segment_text(ctx, i);
