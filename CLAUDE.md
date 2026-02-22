@@ -160,6 +160,22 @@ The back key behavior is configurable via `SettingsDialog` (Spinner). Three mode
 - **Toggle Keyboard**: `shouldBackButtonBeMappedToEscape()` returns `false`, `TermuxActivity.handleCustomBackKey()` toggles soft input.
 - **Macro**: same dispatch path, executes a user-defined macro command (stored in "back_key_macro") via `MacroExecutor`. Supports full `{tag}` syntax.
 
+### Lifecycle & Error Recovery
+
+`TermuxActivity` implements `onPause()` to cancel active voice recording when backgrounded (prevents microphone leak). `onResume()` is minimal — the voice system stays loaded. The uncaught exception handler chains to Android's default handler after logging.
+
+`VoiceInputManager`'s pipeline thread (`VoiceInput-Pipeline`) wraps its body in try-catch to prevent the state machine from getting stuck in `TRANSCRIBING` on unexpected exceptions — transitions to `ERROR` with auto-dismiss.
+
+`WhisperBridge.release()` guards `nativeFree()` behind a `thread.isAlive()` check after join — leak over crash. When `isDestroyed` is true during a pending callback, `onError` is posted instead of silently dropping the callback.
+
+### Panel State Synchronization
+
+Modifier keys (Ctrl/Shift) and macro page index are synced bidirectionally between `GameBoyControlPanel` and `CompactToolbar` in `TermuxActivity.updatePanelVisibility()`. Both panels expose `setCtrlActive(boolean)`, `setShiftActive(boolean)`, `getCurrentMacroPage()`, and `setCurrentMacroPage(int)`.
+
+### SharedPreferences Caching
+
+`VoidTermTerminalViewClient` caches preference values (`tapToggleKeyboard`, `backKeyBehavior`) in volatile fields and invalidates via `OnSharedPreferenceChangeListener`, following the same pattern as `VoiceInputManager`. Avoids I/O on every tap or back key event.
+
 ## Implementation Plan
 
 `plans/IMPLEMENTATION_PLAN.md` defines 6 phases with strict file ownership per agent. Phases 1-3 (scaffolding, components, core systems) produce independent modules. Phase 4 (integration) wires everything into TermuxActivity. Phases 5-6 are docs and validation. Current status: Phases 1-4 implemented.
