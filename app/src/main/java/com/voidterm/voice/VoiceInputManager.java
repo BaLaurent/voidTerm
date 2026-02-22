@@ -62,7 +62,7 @@ public class VoiceInputManager implements TranscriptionListener {
             "whisper_language", "whisper_translate", "whisper_initial_prompt",
             "whisper_temperature", "whisper_beam_search", "whisper_beam_size",
             "whisper_thread_override", "whisper_suppress_non_speech",
-            "whisper_proportional_context"
+            "whisper_proportional_context", "whisper_streaming"
     ));
 
     private final SharedPreferences.OnSharedPreferenceChangeListener configInvalidator =
@@ -198,21 +198,53 @@ public class VoiceInputManager implements TranscriptionListener {
                 float[] pcmData = audioCapture.stopRecording();
                 float audioDurationSec = pcmData != null ? pcmData.length / 16000f : 0f;
                 long transcribeStart = System.currentTimeMillis();
+                final int[] streamingSentLength = {0};
                 whisperBridge.transcribe(pcmData, config, new WhisperBridge.Callback() {
                     @Override
                     public void onSuccess(String text) {
                         long processingTimeMs = System.currentTimeMillis() - transcribeStart;
                         VoiceState newState = null;
-                        synchronized (stateLock) {
-                            if (currentState != VoiceState.TRANSCRIBING) {
-                                Log.w(TAG, "Transcription success received in " + currentState + " state, discarding");
-                                return;
+
+                        if (config.streaming) {
+                            // Send any remaining delta directly to terminal
+                            if (text.length() > streamingSentLength[0]) {
+                                callback.onVoiceTextReady(text.substring(streamingSentLength[0]));
                             }
-                            currentState = VoiceState.SHOWING_RESULT;
-                            newState = VoiceState.SHOWING_RESULT;
+                            synchronized (stateLock) {
+                                if (currentState != VoiceState.TRANSCRIBING) {
+                                    Log.w(TAG, "Streaming success in " + currentState + ", discarding");
+                                    return;
+                                }
+                                currentState = VoiceState.IDLE;
+                                newState = VoiceState.IDLE;
+                            }
+                            dispatchStateChange(newState);
+                        } else {
+                            synchronized (stateLock) {
+                                if (currentState != VoiceState.TRANSCRIBING) {
+                                    Log.w(TAG, "Transcription success received in " + currentState + " state, discarding");
+                                    return;
+                                }
+                                currentState = VoiceState.SHOWING_RESULT;
+                                newState = VoiceState.SHOWING_RESULT;
+                            }
+                            overlay.showTranscription(text, audioDurationSec, processingTimeMs);
+                            dispatchStateChange(newState);
                         }
-                        overlay.showTranscription(text, audioDurationSec, processingTimeMs);
-                        dispatchStateChange(newState);
+                    }
+
+                    @Override
+                    public void onPartialResult(String accumulatedText) {
+                        synchronized (stateLock) {
+                            if (currentState != VoiceState.TRANSCRIBING) return;
+                        }
+                        // Send new text delta directly to terminal PTY
+                        String trimmed = accumulatedText.trim();
+                        if (trimmed.length() > streamingSentLength[0]) {
+                            String delta = trimmed.substring(streamingSentLength[0]);
+                            streamingSentLength[0] = trimmed.length();
+                            callback.onVoiceTextReady(delta);
+                        }
                     }
 
                     @Override
@@ -317,7 +349,8 @@ public class VoiceInputManager implements TranscriptionListener {
                 prefs.getInt("whisper_beam_size", 5),
                 prefs.getInt("whisper_thread_override", 0),
                 prefs.getBoolean("whisper_suppress_non_speech", false),
-                prefs.getBoolean("whisper_proportional_context", false)
+                prefs.getBoolean("whisper_proportional_context", false),
+                prefs.getBoolean("whisper_streaming", false)
         );
     }
 

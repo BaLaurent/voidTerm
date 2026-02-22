@@ -126,8 +126,22 @@ Configurable whisper.cpp transcription parameters in `SettingsDialog` "Transcrip
 | `whisper_beam_size` | int | `5` | Beam width (2-8, only when beam search enabled) |
 | `whisper_thread_override` | int | `0` | Thread count (0=auto via CpuInfo) |
 | `whisper_suppress_non_speech` | boolean | `false` | Filter non-speech tokens |
+| `whisper_streaming` | boolean | `false` | Show text progressively during transcription |
 
-Data flow: `SharedPreferences → WhisperConfig → WhisperBridge.transcribe() → nativeTranscribe() JNI → whisper_full_params`. The JNI layer receives flattened primitives (not the config object) to avoid `GetFieldID` boilerplate. Advanced settings (temperature, beam search, threads, suppress) are hidden behind a collapsible "Advanced..." button in the UI.
+Data flow: `SharedPreferences → WhisperConfig → WhisperBridge.transcribe() → nativeTranscribe() JNI → whisper_full_params`. The JNI layer receives flattened primitives (not the config object) to avoid `GetFieldID` boilerplate. Advanced settings (temperature, beam search, threads, suppress) are hidden behind a collapsible "Advanced..." button in the UI. Streaming toggle is visible in the main Transcription section (not behind Advanced).
+
+### Streaming Transcription
+
+When `whisper_streaming` is enabled, decoded text appears progressively in the overlay during the `TRANSCRIBING` state instead of showing a spinner. Uses whisper.cpp's `new_segment_callback` mechanism.
+
+Data flow: `whisper_full() → new_segment_callback → StreamCallbackData (C++) → JNI CallVoidMethod → WhisperBridge.onNativeSegment() → mainHandler.post → Callback.onPartialResult() → VoiceInputManager → TranscriptionOverlay.updateStreamingText()`.
+
+Key implementation details:
+- When streaming, `GetFloatArrayRegion` (copy) replaces `GetPrimitiveArrayCritical` (zero-copy) because the latter blocks the GC and forbids JNI callbacks
+- `params.single_segment = false` enables multiple segments, triggering the callback progressively
+- The overlay reuses `resultContainer` with hidden Send/Cancel buttons during streaming; buttons reappear when `showTranscription()` is called with the final text
+- Benchmark (`DeviceProfiler`) always passes `streaming=false` to avoid callback overhead during profiling
+- Default is OFF — behavior is 100% identical to pre-streaming when disabled
 
 ### Auto-Tuning (DeviceProfiler)
 

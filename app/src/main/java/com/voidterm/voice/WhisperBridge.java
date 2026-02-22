@@ -73,7 +73,7 @@ public class WhisperBridge {
                                               boolean translate, String initialPrompt,
                                               float temperature, boolean useBeamSearch,
                                               int beamSize, boolean suppressNonSpeech,
-                                              boolean proportionalContext);
+                                              boolean proportionalContext, boolean streaming);
     private native void nativeFree(long ctx);
     private native boolean nativeIsLoaded(long ctx);
     private native void nativeAbort();
@@ -89,6 +89,8 @@ public class WhisperBridge {
     private volatile Thread transcribeThread;
     private volatile Runnable timeoutRunnable;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+
+    private volatile Callback currentStreamingCallback;
 
     private final List<String> logBuffer = new ArrayList<>();
 
@@ -129,6 +131,19 @@ public class WhisperBridge {
         void onSuccess(String result);
         void onError(String error);
         default void onProgress(String phase, int percent) {}
+        default void onPartialResult(String accumulatedText) {}
+    }
+
+    /**
+     * Called from JNI (streaming_segment_callback) on the transcription thread.
+     * Forwards accumulated text to the current callback on the main thread.
+     */
+    @SuppressWarnings("unused") // Called from native code via JNI
+    private void onNativeSegment(String accumulatedText) {
+        Callback cb = currentStreamingCallback;
+        if (cb != null && !isDestroyed) {
+            mainHandler.post(() -> cb.onPartialResult(accumulatedText));
+        }
     }
 
     /**
@@ -267,7 +282,12 @@ public class WhisperBridge {
 
         bufLog("Transcription start: " + audio.length + " samples ("
                 + String.format("%.1f", audio.length / 16000f) + "s), lang=" + config.language
-                + ", translate=" + config.translate + ", threads=" + threadCount);
+                + ", translate=" + config.translate + ", threads=" + threadCount
+                + ", streaming=" + config.streaming);
+
+        if (config.streaming) {
+            currentStreamingCallback = callback;
+        }
 
         Runnable watchdog = () -> {
             if (isTranscribing.compareAndSet(true, false)) {
@@ -289,7 +309,7 @@ public class WhisperBridge {
                 String result = nativeTranscribe(handle, audio, config.language, threadCount,
                         config.translate, prompt, config.temperature,
                         config.useBeamSearch, config.beamSize, config.suppressNonSpeech,
-                        config.useProportionalContext);
+                        config.useProportionalContext, config.streaming);
 
                 long elapsed = System.currentTimeMillis() - startTime;
                 bufLog("nativeTranscribe returned in " + elapsed + "ms, result="
@@ -297,6 +317,8 @@ public class WhisperBridge {
 
                 // Cancel watchdog — transcription completed normally
                 mainHandler.removeCallbacks(watchdog);
+
+                currentStreamingCallback = null;
 
                 if (!isTranscribing.compareAndSet(true, false)) {
                     bufErr("Transcription completed after timeout, discarding");
@@ -323,6 +345,7 @@ public class WhisperBridge {
 
             } catch (Exception e) {
                 bufErr("Transcription exception: " + e.getMessage());
+                currentStreamingCallback = null;
                 mainHandler.removeCallbacks(watchdog);
                 isTranscribing.set(false);
 
@@ -367,7 +390,7 @@ public class WhisperBridge {
         try {
             long start = System.currentTimeMillis();
             nativeTranscribe(handle, audio, "en", threadCount,
-                    false, null, 0.0f, false, 5, false, true);
+                    false, null, 0.0f, false, 5, false, true, false);
             long elapsed = System.currentTimeMillis() - start;
             return elapsed;
         } catch (Exception e) {

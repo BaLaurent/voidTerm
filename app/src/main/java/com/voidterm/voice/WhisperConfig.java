@@ -14,11 +14,12 @@ public class WhisperConfig {
     public final int threadCount;
     public final boolean suppressNonSpeech;
     public final boolean useProportionalContext;
+    public final boolean streaming;
 
     public WhisperConfig(String language, boolean translate, String initialPrompt,
                          float temperature, boolean useBeamSearch, int beamSize,
                          int threadCount, boolean suppressNonSpeech,
-                         boolean useProportionalContext) {
+                         boolean useProportionalContext, boolean streaming) {
         this.language = language;
         this.translate = translate;
         this.initialPrompt = initialPrompt;
@@ -28,5 +29,6 @@ public class WhisperConfig {
         this.threadCount = threadCount;
         this.suppressNonSpeech = suppressNonSpeech;
         this.useProportionalContext = useProportionalContext;
+        this.streaming = streaming;
     }
 }

@@ -43,6 +43,7 @@ public class SettingsDialog {
     static final String KEY_WHISPER_THREAD_OVERRIDE = "whisper_thread_override";
     static final String KEY_WHISPER_SUPPRESS_NON_SPEECH = "whisper_suppress_non_speech";
     static final String KEY_WHISPER_PROPORTIONAL_CONTEXT = "whisper_proportional_context";
+    static final String KEY_WHISPER_STREAMING = "whisper_streaming";
     static final String BACK_ESCAPE = "escape";
     static final String BACK_TOGGLE_KEYBOARD = "toggle_keyboard";
     static final String BACK_MACRO = "macro";
@@ -184,6 +185,15 @@ public class SettingsDialog {
         promptField.setFilters(new InputFilter[]{new InputFilter.LengthFilter(500)});
         promptField.setText(prefs.getString(KEY_WHISPER_INITIAL_PROMPT, ""));
         layout.addView(promptField);
+
+        // Streaming transcription toggle
+        CheckBox streamingToggle = new CheckBox(activity);
+        streamingToggle.setText("Streaming transcription");
+        streamingToggle.setTextSize(14);
+        streamingToggle.setChecked(prefs.getBoolean(KEY_WHISPER_STREAMING, false));
+        streamingToggle.setOnCheckedChangeListener((btn, checked) ->
+                prefs.edit().putBoolean(KEY_WHISPER_STREAMING, checked).apply());
+        layout.addView(streamingToggle);
 
         // Advanced section (collapsed by default)
         LinearLayout advancedContainer = new LinearLayout(activity);
