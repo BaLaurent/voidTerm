@@ -57,7 +57,20 @@ User confirms (Enter) → VoiceInputCallback.onVoiceTextReady() → Terminal PTY
 
 ### JNI Layer
 
-`app/src/main/jni/whisper_jni.cpp` bridges to whisper.cpp (git submodule at `app/src/main/jni/whisper.cpp`, pinned to v1.7.3). Four native methods on `WhisperBridge`: `nativeInit`, `nativeTranscribe`, `nativeFree`, `nativeIsLoaded`.
+`app/src/main/jni/whisper_jni.cpp` bridges to whisper.cpp (git submodule at `app/src/main/jni/whisper.cpp`, pinned to v1.7.3). Six native methods on `WhisperBridge`: `nativeInit`, `nativeTranscribe`, `nativeFree`, `nativeIsLoaded`, `nativeAbort` (cooperative cancellation via ggml abort callback), `nativeGetSystemInfo` (NEON/FP16/backend info).
+
+### Native Build (CMakeLists.txt)
+
+Sources are compiled directly into one `.so` (matching official whisper.android examples), bypassing the ggml CMake build system. Two library variants are built:
+- `whisper_jni` — baseline ARM NEON (always available on arm64)
+- `whisper_jni_v8fp16` — ARMv8.2-A half-precision (`-march=armv8.2-a+fp16`, ~15-30% faster on Quest XR2)
+
+Critical build details:
+- `-O3` is always applied (even in Debug) — without it, NEON matmul is ~15-20x slower
+- `GGML_USE_CPU` define is required to register the CPU backend in `ggml-backend-reg.cpp`
+- OpenMP is not used — ggml uses its own pthreads internally
+
+`CpuInfo` detects optimal thread count by reading `/sys/devices/system/cpu/` frequencies (drops lowest-freq cores for big.LITTLE), falls back to `(availableProcessors + 1) / 2`.
 
 ### Threading Model
 
@@ -94,7 +107,7 @@ Supported tags: `{esc}`, `{enter}`, `{tab}`, `{up}`, `{down}`, `{left}`, `{right
 
 ### Settings & Model Selection
 
-`SettingsDialog` (AlertDialog, programmatic layout like `TerminalStyleDialog`) lets users select a custom whisper.cpp model file via Android's `ACTION_OPEN_DOCUMENT` file picker. The selected file is copied to `{filesDir}/models/`, its name persisted in `SharedPreferences` ("voidterm_settings" / "whisper_model_name"), and hot-reloaded via `VoiceInputManager.reloadModel()`. Default model: `ggml-base.bin` (bundled in assets). `WhisperBridge.loadModel()` checks `{filesDir}/models/` first, falls back to assets, and returns a clear error if neither exists.
+`SettingsDialog` (AlertDialog, programmatic layout like `TerminalStyleDialog`) lets users select a custom whisper.cpp model file via Android's `ACTION_OPEN_DOCUMENT` file picker. The selected file is copied to `{filesDir}/models/`, its name persisted in `SharedPreferences` ("voidterm_settings" / "whisper_model_name"), and hot-reloaded via `VoiceInputManager.reloadModel()`. Default model: `ggml-base.bin` (bundled in assets). `WhisperBridge.loadModel()` checks `{filesDir}/models/` first, falls back to assets, and returns a clear error if neither exists. GPU toggle (default off) controls `whisper_context_params.use_gpu`. `WhisperBridge` selects the FP16 library variant at runtime if `Build.VERSION.SDK_INT >= 27` (ARMv8.2-A support).
 
 ### Haptic Feedback
 
