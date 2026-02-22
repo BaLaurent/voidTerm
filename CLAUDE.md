@@ -84,7 +84,7 @@ Changes to files in `com.voidterm.contracts` affect the entire voice pipeline. `
 
 ### Macro System
 
-Macros are user-configurable buttons on `GameBoyControlPanel` (4 buttons) and `CompactToolbar` (swipeable page). Edited via long-press → `MacroEditDialog`. Persisted in `SharedPreferences` ("voidterm_macros").
+12 user-configurable macros displayed as 3 pages of 4 buttons in both `GameBoyControlPanel` (page cycle button above vertical stack) and `CompactToolbar` (page indicator button + swipe navigation across pages). Edited via long-press → `MacroEditDialog`. Persistence centralized in `MacroStore` (SharedPreferences "voidterm_macros", JSON array of 12 objects). Migrates automatically from the old 4-macro format by preserving existing macros and appending 8 defaults.
 
 `MacroExecutor` parses and executes macro commands. Two modes:
 - **Plain text** (no `{`): sends text + `\r` (backward compatible)

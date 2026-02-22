@@ -1,7 +1,6 @@
 package com.voidterm.app;
 
 import android.content.Context;
-import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -16,13 +15,10 @@ import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 
-import org.json.JSONArray;
-import org.json.JSONObject;
-
 /**
  * Compact horizontal toolbar shown above the soft keyboard.
  * Page 1 (main): ESC, CTL, SHF, TAB, Up, Down, Enter, STT
- * Page 2 (macros): back arrow + 4 macro buttons (swipe left to access)
+ * Pages 2-4 (macros): back/page button + 4 macro buttons (swipe left to access, 3 pages)
  * Uses the same ControlPanelListener interface as GameBoyControlPanel.
  */
 public class CompactToolbar extends FrameLayout {
@@ -32,15 +28,6 @@ public class CompactToolbar extends FrameLayout {
     private static final int COLOR_MODIFIER = 0xFF3C3C6E;
     private static final int COLOR_MACRO    = 0xFF585858;
     private static final int COLOR_ACTIVE   = 0xFF9BBC0F;
-
-    private static final String MACROS_PREFS = "voidterm_macros";
-    private static final String MACROS_KEY = "macros";
-    private static final String[][] DEFAULT_MACROS = {
-            {"/clear", "clear"},
-            {"/compact", "export TERM_COMPACT=1"},
-            {"macro3", "echo 3"},
-            {"macro4", "echo 4"},
-    };
 
     private static final int SWIPE_THRESHOLD_DP = 60;
 
@@ -60,11 +47,13 @@ public class CompactToolbar extends FrameLayout {
 
     private String[][] macros;
     private final Button[] macroButtons = new Button[4];
+    private int currentMacroPage = 0;
+    private Button macroPageButton;
 
     public CompactToolbar(Context context) {
         super(context);
         setBackgroundColor(0xFFC4C4B4);
-        macros = loadMacros(context);
+        macros = MacroStore.load(context);
         buildMainRow(context);
         buildMacroRow(context);
     }
@@ -90,7 +79,7 @@ public class CompactToolbar extends FrameLayout {
         // CTL (sticky toggle)
         ctrlButton = makeButton(context, "CTL", COLOR_MODIFIER);
         ctrlButton.setOnClickListener(v -> {
-            v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             ctrlActive = !ctrlActive;
             updateModifierButtonColor(ctrlButton, ctrlActive);
         });
@@ -99,7 +88,7 @@ public class CompactToolbar extends FrameLayout {
         // SHF (sticky toggle)
         shiftButton = makeButton(context, "SHF", COLOR_MODIFIER);
         shiftButton.setOnClickListener(v -> {
-            v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             shiftActive = !shiftActive;
             updateModifierButtonColor(shiftButton, shiftActive);
         });
@@ -168,18 +157,48 @@ public class CompactToolbar extends FrameLayout {
         macroRow.setVisibility(View.GONE);
 
         // Back button
-        addToolbarButton(macroRow, context, "\u25C0", COLOR_DPAD, v -> showPage(false));
+        addToolbarButton(macroRow, context, "\u25C0", COLOR_DPAD, v -> {
+            if (currentMacroPage > 0) {
+                currentMacroPage--;
+                updateMacroPage();
+            } else {
+                showPage(false);
+            }
+        });
+
+        // Page indicator button
+        macroPageButton = makeButton(context, "1/" + MacroStore.PAGE_COUNT, COLOR_DPAD);
+        macroPageButton.setOnClickListener(v -> {
+            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            currentMacroPage = (currentMacroPage + 1) % MacroStore.PAGE_COUNT;
+            updateMacroPage();
+        });
+        macroRow.addView(macroPageButton, buttonParams());
 
         // 4 macro buttons
         for (int i = 0; i < 4; i++) {
-            Button btn = makeButton(context, macros[i][0], COLOR_MACRO);
+            Button btn = makeButton(context, macros[currentMacroPage * MacroStore.PAGE_SIZE + i][0], COLOR_MACRO);
             final int index = i;
             btn.setOnClickListener(v -> {
-                v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+                if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
                 if (listener != null) {
-                    MacroExecutor.execute(macros[index][1],
+                    int actualIndex = currentMacroPage * MacroStore.PAGE_SIZE + index;
+                    MacroExecutor.execute(macros[actualIndex][1],
                             listener::onSendToTerminal, v.getHandler());
                 }
+            });
+            btn.setOnLongClickListener(v -> {
+                if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+                int actualIndex = currentMacroPage * MacroStore.PAGE_SIZE + index;
+                MacroEditDialog.show(context, macros[actualIndex][0], macros[actualIndex][1],
+                        (label, cmd) -> {
+                            int ai = currentMacroPage * MacroStore.PAGE_SIZE + index;
+                            macros[ai][0] = label;
+                            macros[ai][1] = cmd;
+                            macroButtons[index].setText(label);
+                            MacroStore.save(context, macros);
+                        });
+                return true;
             });
             macroButtons[i] = btn;
             macroRow.addView(btn, buttonParams());
@@ -205,10 +224,15 @@ public class CompactToolbar extends FrameLayout {
     }
 
     private void reloadMacroLabels() {
-        this.macros = loadMacros(getContext());
-        for (int i = 0; i < 4; i++) {
-            macroButtons[i].setText(macros[i][0]);
+        this.macros = MacroStore.load(getContext());
+        updateMacroPage();
+    }
+
+    private void updateMacroPage() {
+        for (int i = 0; i < MacroStore.PAGE_SIZE; i++) {
+            macroButtons[i].setText(macros[currentMacroPage * MacroStore.PAGE_SIZE + i][0]);
         }
+        macroPageButton.setText((currentMacroPage + 1) + "/" + MacroStore.PAGE_COUNT);
     }
 
     // --- Swipe detection ---
@@ -228,10 +252,23 @@ public class CompactToolbar extends FrameLayout {
                     int threshold = dp(SWIPE_THRESHOLD_DP);
                     if (Math.abs(dx) > threshold && Math.abs(dx) > Math.abs(dy) * 2) {
                         tracking = false;
-                        if (dx < 0 && !showingMacros) {
-                            showPage(true);
-                        } else if (dx > 0 && showingMacros) {
-                            showPage(false);
+                        if (dx < 0) {
+                            // Swipe left
+                            if (!showingMacros) {
+                                currentMacroPage = 0;
+                                showPage(true);
+                            } else if (currentMacroPage < MacroStore.PAGE_COUNT - 1) {
+                                currentMacroPage++;
+                                updateMacroPage();
+                            }
+                        } else {
+                            // Swipe right
+                            if (showingMacros && currentMacroPage > 0) {
+                                currentMacroPage--;
+                                updateMacroPage();
+                            } else if (showingMacros) {
+                                showPage(false);
+                            }
                         }
                         return true;
                     }
@@ -250,7 +287,7 @@ public class CompactToolbar extends FrameLayout {
     private void addToolbarButton(LinearLayout row, Context context, String label, int color, OnClickListener click) {
         Button btn = makeButton(context, label, color);
         btn.setOnClickListener(v -> {
-            v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             click.onClick(v);
         });
         row.addView(btn, buttonParams());
@@ -306,7 +343,7 @@ public class CompactToolbar extends FrameLayout {
         btn.setOnTouchListener((v, event) -> {
             switch (event.getAction()) {
                 case MotionEvent.ACTION_DOWN:
-                    v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+                    if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
                     if (listener != null) listener.onSendToTerminal(escSeq);
                     v.setPressed(true);
                     v.postDelayed(new Runnable() {
@@ -360,34 +397,6 @@ public class CompactToolbar extends FrameLayout {
     public void resetShift() {
         shiftActive = false;
         updateModifierButtonColor(shiftButton, false);
-    }
-
-    // --- Macro persistence (shared with GameBoyControlPanel) ---
-
-    private String[][] loadMacros(Context context) {
-        SharedPreferences prefs = context.getSharedPreferences(MACROS_PREFS, Context.MODE_PRIVATE);
-        String json = prefs.getString(MACROS_KEY, null);
-        if (json != null) {
-            try {
-                JSONArray arr = new JSONArray(json);
-                if (arr.length() == 4) {
-                    String[][] result = new String[4][2];
-                    for (int i = 0; i < 4; i++) {
-                        JSONObject obj = arr.getJSONObject(i);
-                        result[i][0] = obj.getString("label");
-                        result[i][1] = obj.getString("cmd");
-                    }
-                    return result;
-                }
-            } catch (Exception ignored) {
-            }
-        }
-        String[][] result = new String[4][2];
-        for (int i = 0; i < 4; i++) {
-            result[i][0] = DEFAULT_MACROS[i][0];
-            result[i][1] = DEFAULT_MACROS[i][1];
-        }
-        return result;
     }
 
     // --- Utility ---

@@ -1,7 +1,6 @@
 package com.voidterm.app;
 
 import android.content.Context;
-import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -17,9 +16,6 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.RelativeLayout;
 
-import org.json.JSONArray;
-import org.json.JSONObject;
-
 /**
  * GameBoy-inspired control panel optimized for right-hand VR raycast usage.
  *
@@ -34,15 +30,6 @@ import org.json.JSONObject;
 public class GameBoyControlPanel extends FrameLayout {
 
     private static final String TAG = "GameBoyControlPanel";
-    private static final String PREFS_NAME = "voidterm_macros";
-    private static final String PREFS_KEY = "macros";
-
-    private static final String[][] DEFAULT_MACROS = {
-            {"/clear", "clear"},
-            {"/compact", "export TERM_COMPACT=1"},
-            {"macro3", "echo 3"},
-            {"macro4", "echo 4"},
-    };
 
     // GameBoy DMG-01 color palette
     private static final int COLOR_DPAD        = 0xFF2B2B2B; // D-pad charcoal
@@ -55,6 +42,8 @@ public class GameBoyControlPanel extends FrameLayout {
     private ControlPanelListener listener;
     private final Button[] macroButtons = new Button[4];
     private String[][] macros; // [i][0]=label, [i][1]=cmd
+    private int currentPage = 0;
+    private Button pageButton;
 
     private boolean ctrlActive;
     private boolean shiftActive;
@@ -69,7 +58,7 @@ public class GameBoyControlPanel extends FrameLayout {
 
     public GameBoyControlPanel(Context context) {
         super(context);
-        macros = loadMacros(context);
+        macros = MacroStore.load(context);
         buildLayout(context);
     }
 
@@ -92,7 +81,7 @@ public class GameBoyControlPanel extends FrameLayout {
         menuBtn.setPadding(dp(24), 0, dp(24), 0);
         menuBtn.setMinWidth(dp(80));
         menuBtn.setOnClickListener(v -> {
-            v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             if (listener != null) listener.onSettingsRequested();
         });
         FrameLayout.LayoutParams menuLp = new FrameLayout.LayoutParams(
@@ -122,27 +111,46 @@ public class GameBoyControlPanel extends FrameLayout {
         col.setGravity(Gravity.CENTER);
 
         int spacing = dp(4);
+
+        // Page cycle button at top
+        pageButton = makeButton(context, dp(24), "1/3", 8f, COLOR_MACRO, true);
+        pageButton.setPadding(dp(8), 0, dp(8), 0);
+        pageButton.setMinWidth(dp(36));
+        pageButton.setOnClickListener(v -> {
+            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            currentPage = (currentPage + 1) % MacroStore.PAGE_COUNT;
+            updateMacroPage();
+        });
+        LinearLayout.LayoutParams pageLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(24));
+        pageLp.gravity = Gravity.CENTER_HORIZONTAL;
+        pageLp.bottomMargin = spacing;
+        col.addView(pageButton, pageLp);
+
         for (int i = 0; i < 4; i++) {
-            Button btn = makeButton(context, dp(32), macros[i][0], 10f, COLOR_MACRO, true);
+            Button btn = makeButton(context, dp(32), macros[currentPage * MacroStore.PAGE_SIZE + i][0], 10f, COLOR_MACRO, true);
             btn.setPadding(dp(12), 0, dp(12), 0);
             btn.setMinWidth(dp(40));
             final int index = i;
 
             btn.setOnClickListener(v -> {
-                v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+                if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
                 if (listener != null) {
-                    MacroExecutor.execute(macros[index][1],
+                    int actualIndex = currentPage * MacroStore.PAGE_SIZE + index;
+                    MacroExecutor.execute(macros[actualIndex][1],
                             listener::onSendToTerminal, v.getHandler());
                 }
             });
             btn.setOnLongClickListener(v -> {
-                v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
-                MacroEditDialog.show(context, macros[index][0], macros[index][1],
+                if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+                int actualIndex = currentPage * MacroStore.PAGE_SIZE + index;
+                MacroEditDialog.show(context, macros[actualIndex][0], macros[actualIndex][1],
                         (label, cmd) -> {
-                            macros[index][0] = label;
-                            macros[index][1] = cmd;
+                            int ai = currentPage * MacroStore.PAGE_SIZE + index;
+                            macros[ai][0] = label;
+                            macros[ai][1] = cmd;
                             macroButtons[index].setText(label);
-                            saveMacros(context);
+                            MacroStore.save(context, macros);
                         });
                 return true;
             });
@@ -152,10 +160,17 @@ public class GameBoyControlPanel extends FrameLayout {
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, dp(32));
             lp.gravity = Gravity.CENTER_HORIZONTAL;
-            if (i > 0) lp.topMargin = spacing;
+            lp.topMargin = spacing;
             col.addView(btn, lp);
         }
         return col;
+    }
+
+    private void updateMacroPage() {
+        for (int i = 0; i < MacroStore.PAGE_SIZE; i++) {
+            macroButtons[i].setText(macros[currentPage * MacroStore.PAGE_SIZE + i][0]);
+        }
+        pageButton.setText((currentPage + 1) + "/" + MacroStore.PAGE_COUNT);
     }
 
     // --- D-pad Zone (center-right): cross cavity + arrows around STT center ---
@@ -193,7 +208,7 @@ public class GameBoyControlPanel extends FrameLayout {
         int sttId = View.generateViewId();
         stt.setId(sttId);
         stt.setOnClickListener(v -> {
-            v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             if (listener != null) listener.onVoiceToggle();
         });
         RelativeLayout.LayoutParams sttLp = new RelativeLayout.LayoutParams(sttSize, sttSize);
@@ -243,7 +258,7 @@ public class GameBoyControlPanel extends FrameLayout {
         btn.setOnTouchListener((v, event) -> {
             switch (event.getAction()) {
                 case MotionEvent.ACTION_DOWN:
-                    v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+                    if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
                     if (listener != null) listener.onSendToTerminal(escSeq);
                     v.setPressed(true);
                     // Start repeating
@@ -279,7 +294,7 @@ public class GameBoyControlPanel extends FrameLayout {
         // ESC
         Button esc = makeButton(context, btnSize, "ESC", 9f, COLOR_MODIFIER, false);
         esc.setOnClickListener(v -> {
-            v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             if (listener != null) listener.onSendToTerminal("\033");
         });
         LinearLayout.LayoutParams escLp = new LinearLayout.LayoutParams(btnSize, btnSize);
@@ -289,7 +304,7 @@ public class GameBoyControlPanel extends FrameLayout {
         // CTL (sticky toggle)
         ctrlButton = makeButton(context, btnSize, "CTL", 9f, COLOR_MODIFIER, false);
         ctrlButton.setOnClickListener(v -> {
-            v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             ctrlActive = !ctrlActive;
             updateButtonColor(ctrlButton, ctrlActive);
         });
@@ -301,7 +316,7 @@ public class GameBoyControlPanel extends FrameLayout {
         // SHF (sticky toggle)
         shiftButton = makeButton(context, btnSize, "SHF", 9f, COLOR_MODIFIER, false);
         shiftButton.setOnClickListener(v -> {
-            v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             shiftActive = !shiftActive;
             updateButtonColor(shiftButton, shiftActive);
         });
@@ -326,7 +341,7 @@ public class GameBoyControlPanel extends FrameLayout {
         int sTabSize = dp(40);
         Button sTab = makeButton(context, sTabSize, "S-TAB", 8f, COLOR_MODIFIER, false);
         sTab.setOnClickListener(v -> {
-            v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             if (listener != null) listener.onSendToTerminal("\033[Z");
         });
         LinearLayout.LayoutParams sTabLp = new LinearLayout.LayoutParams(sTabSize, sTabSize);
@@ -337,7 +352,7 @@ public class GameBoyControlPanel extends FrameLayout {
         int tabSize = dp(48);
         Button tab = makeButton(context, tabSize, "TAB", 10f, COLOR_PRIMARY, false);
         tab.setOnClickListener(v -> {
-            v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             if (listener != null) {
                 if (shiftActive) {
                     listener.onSendToTerminal("\033[Z");
@@ -356,7 +371,7 @@ public class GameBoyControlPanel extends FrameLayout {
         int enterSize = dp(52);
         Button enter = makeButton(context, enterSize, "\u21B5", 18f, COLOR_PRIMARY, false);
         enter.setOnClickListener(v -> {
-            v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             if (listener != null) listener.onSendToTerminal("\r");
         });
         LinearLayout.LayoutParams enterLp = new LinearLayout.LayoutParams(enterSize, enterSize);
@@ -368,7 +383,7 @@ public class GameBoyControlPanel extends FrameLayout {
         int sEnterSize = dp(40);
         Button sEnter = makeButton(context, sEnterSize, "S-\u21B5", 8f, COLOR_MODIFIER, false);
         sEnter.setOnClickListener(v -> {
-            v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             if (listener != null) listener.onSendToTerminal("\n");
         });
         LinearLayout.LayoutParams sEnterLp = new LinearLayout.LayoutParams(sEnterSize, sEnterSize);
@@ -481,47 +496,4 @@ public class GameBoyControlPanel extends FrameLayout {
                 TypedValue.COMPLEX_UNIT_DIP, value, getResources().getDisplayMetrics());
     }
 
-    // --- Macro persistence ---
-
-    private String[][] loadMacros(Context context) {
-        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-        String json = prefs.getString(PREFS_KEY, null);
-        if (json != null) {
-            try {
-                JSONArray arr = new JSONArray(json);
-                if (arr.length() == 4) {
-                    String[][] result = new String[4][2];
-                    for (int i = 0; i < 4; i++) {
-                        JSONObject obj = arr.getJSONObject(i);
-                        result[i][0] = obj.getString("label");
-                        result[i][1] = obj.getString("cmd");
-                    }
-                    return result;
-                }
-            } catch (Exception ignored) {
-            }
-        }
-        // Return defaults
-        String[][] result = new String[4][2];
-        for (int i = 0; i < 4; i++) {
-            result[i][0] = DEFAULT_MACROS[i][0];
-            result[i][1] = DEFAULT_MACROS[i][1];
-        }
-        return result;
-    }
-
-    private void saveMacros(Context context) {
-        try {
-            JSONArray arr = new JSONArray();
-            for (int i = 0; i < 4; i++) {
-                JSONObject obj = new JSONObject();
-                obj.put("label", macros[i][0]);
-                obj.put("cmd", macros[i][1]);
-                arr.put(obj);
-            }
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                    .edit().putString(PREFS_KEY, arr.toString()).apply();
-        } catch (Exception ignored) {
-        }
-    }
 }
