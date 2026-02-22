@@ -96,6 +96,13 @@ Supported tags: `{esc}`, `{enter}`, `{tab}`, `{up}`, `{down}`, `{left}`, `{right
 
 `SettingsDialog` (AlertDialog, programmatic layout like `TerminalStyleDialog`) lets users select a custom whisper.cpp model file via Android's `ACTION_OPEN_DOCUMENT` file picker. The selected file is copied to `{filesDir}/models/`, its name persisted in `SharedPreferences` ("voidterm_settings" / "whisper_model_name"), and hot-reloaded via `VoiceInputManager.reloadModel()`. Default model: `ggml-base.bin` (bundled in assets). `WhisperBridge.loadModel()` checks `{filesDir}/models/` first, falls back to assets, and returns a clear error if neither exists.
 
+### Back Key Behavior
+
+The back key behavior is configurable via `SettingsDialog` (Spinner). Three modes persisted in `SharedPreferences` ("voidterm_settings" / "back_key_behavior"):
+- **Escape** (default): `VoidTermTerminalViewClient.shouldBackButtonBeMappedToEscape()` returns `true`, TerminalView sends `\033`.
+- **Toggle Keyboard**: `shouldBackButtonBeMappedToEscape()` returns `false`, `TermuxActivity.handleCustomBackKey()` toggles soft input.
+- **Macro**: same dispatch path, executes a user-defined macro command (stored in "back_key_macro") via `MacroExecutor`. Supports full `{tag}` syntax.
+
 ## Implementation Plan
 
 `plans/IMPLEMENTATION_PLAN.md` defines 6 phases with strict file ownership per agent. Phases 1-3 (scaffolding, components, core systems) produce independent modules. Phase 4 (integration) wires everything into TermuxActivity. Phases 5-6 are docs and validation. Current status: Phases 1-4 implemented.
