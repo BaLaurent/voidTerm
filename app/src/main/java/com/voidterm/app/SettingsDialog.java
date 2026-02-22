@@ -31,6 +31,10 @@ public class SettingsDialog {
     public static final String KEY_TAP_TOGGLE_KEYBOARD = "tap_toggle_keyboard";
     public static final String KEY_HAPTIC_FEEDBACK = "haptic_feedback";
     public static final String KEY_FULLSCREEN_MODE = "fullscreen_mode";
+    public static final String KEY_PANEL_MODE = "panel_mode";
+    public static final String PANEL_GAMEBOY = "gameboy";
+    public static final String PANEL_COMPACT = "compact";
+    public static final String PANEL_FULLSCREEN = "fullscreen";
     public static final String KEY_USE_GPU = "use_gpu";
     public static final String KEY_BACK_BEHAVIOR = "back_key_behavior";
     public static final String KEY_BACK_MACRO = "back_key_macro";
@@ -381,27 +385,57 @@ public class SettingsDialog {
         });
         layout.addView(themeSpinner);
 
-        boolean isFullscreen = prefs.getBoolean(KEY_FULLSCREEN_MODE, false);
+        // Panel mode spinner (replaces fullscreen checkbox)
+        String[] panelModeLabels = {"GameBoy Panel", "Compact Panel", "Fullscreen (toolbar only)"};
+        String[] panelModeValues = {PANEL_GAMEBOY, PANEL_COMPACT, PANEL_FULLSCREEN};
+        String currentPanelMode = migratePanelMode(prefs);
 
-        CheckBox fullscreenToggle = new CheckBox(activity);
-        fullscreenToggle.setText("Fullscreen (toolbar only)");
-        fullscreenToggle.setTextSize(14);
-        fullscreenToggle.setChecked(isFullscreen);
-        layout.addView(fullscreenToggle);
+        Spinner panelModeSpinner = new Spinner(activity);
+        ArrayAdapter<String> panelAdapter = new ArrayAdapter<>(activity,
+                android.R.layout.simple_spinner_item, panelModeLabels);
+        panelAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        panelModeSpinner.setAdapter(panelAdapter);
+
+        int panelIndex = 0;
+        for (int i = 0; i < panelModeValues.length; i++) {
+            if (panelModeValues[i].equals(currentPanelMode)) { panelIndex = i; break; }
+        }
+        panelModeSpinner.setSelection(panelIndex);
+        layout.addView(panelModeSpinner);
+
+        boolean isFullscreen = PANEL_FULLSCREEN.equals(currentPanelMode);
+        boolean isGameboy = PANEL_GAMEBOY.equals(currentPanelMode);
 
         CheckBox toolbarToggle = new CheckBox(activity);
         toolbarToggle.setText("Compact toolbar above keyboard");
         toolbarToggle.setTextSize(14);
         toolbarToggle.setChecked(prefs.getBoolean(KEY_COMPACT_TOOLBAR, true));
         toolbarToggle.setEnabled(!isFullscreen);
-        toolbarToggle.setOnCheckedChangeListener((btn, checked) ->
-                prefs.edit().putBoolean(KEY_COMPACT_TOOLBAR, checked).apply());
+        toolbarToggle.setOnCheckedChangeListener((btn, checked) -> {
+            prefs.edit().putBoolean(KEY_COMPACT_TOOLBAR, checked).apply();
+            ((TermuxActivity) activity).updatePanelVisibility();
+        });
         layout.addView(toolbarToggle);
 
-        fullscreenToggle.setOnCheckedChangeListener((btn, checked) -> {
-            prefs.edit().putBoolean(KEY_FULLSCREEN_MODE, checked).apply();
-            toolbarToggle.setEnabled(!checked);
-            ((TermuxActivity) activity).updatePanelVisibility();
+        Button customLayoutBtn = new Button(activity);
+        customLayoutBtn.setText("Customize Layout");
+        customLayoutBtn.setAllCaps(false);
+        customLayoutBtn.setTextSize(14);
+        customLayoutBtn.setEnabled(isGameboy);
+        layout.addView(customLayoutBtn);
+
+        panelModeSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int pos, long id) {
+                prefs.edit().putString(KEY_PANEL_MODE, panelModeValues[pos]).apply();
+                toolbarToggle.setEnabled(!PANEL_FULLSCREEN.equals(panelModeValues[pos]));
+                customLayoutBtn.setEnabled(PANEL_GAMEBOY.equals(panelModeValues[pos]));
+                if (!initializing[0]) {
+                    ((TermuxActivity) activity).updatePanelVisibility();
+                }
+            }
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {}
         });
 
         CheckBox tapToggle = new CheckBox(activity);
@@ -419,12 +453,6 @@ public class SettingsDialog {
         hapticToggle.setOnCheckedChangeListener((btn, checked) ->
                 prefs.edit().putBoolean(KEY_HAPTIC_FEEDBACK, checked).apply());
         layout.addView(hapticToggle);
-
-        Button customLayoutBtn = new Button(activity);
-        customLayoutBtn.setText("Customize Layout");
-        customLayoutBtn.setAllCaps(false);
-        customLayoutBtn.setTextSize(14);
-        layout.addView(customLayoutBtn);
 
         // Section: Back Key
         TextView backLabel = new TextView(activity);
@@ -510,5 +538,26 @@ public class SettingsDialog {
         dialog.show();
         // Clear initializing flag after queued SelectionNotifier runnables
         layout.post(() -> initializing[0] = false);
+    }
+
+    /**
+     * Migrate old fullscreen_mode boolean to panel_mode string.
+     * Returns the current panel mode value after migration.
+     */
+    static String migratePanelMode(SharedPreferences prefs) {
+        if (prefs.contains(KEY_PANEL_MODE)) {
+            return prefs.getString(KEY_PANEL_MODE, PANEL_GAMEBOY);
+        }
+        // Migrate from old fullscreen_mode boolean
+        if (prefs.contains(KEY_FULLSCREEN_MODE)) {
+            boolean wasFullscreen = prefs.getBoolean(KEY_FULLSCREEN_MODE, false);
+            String mode = wasFullscreen ? PANEL_FULLSCREEN : PANEL_GAMEBOY;
+            prefs.edit()
+                    .putString(KEY_PANEL_MODE, mode)
+                    .remove(KEY_FULLSCREEN_MODE)
+                    .apply();
+            return mode;
+        }
+        return PANEL_GAMEBOY;
     }
 }

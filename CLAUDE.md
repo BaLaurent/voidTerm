@@ -96,9 +96,13 @@ Changes to files in `com.voidterm.contracts` affect the entire voice pipeline. `
 
 `GameBoyControlPanel` provides a touchscreen control panel styled like a Game Boy. Includes D-pad, modifier keys (Ctrl, Shift, Esc), Tab/S-Tab, Enter/S-Enter, macro buttons, and a burger menu button (☰). Communicates with `TermuxActivity` via `ControlPanelListener` interface (`onSendToTerminal`, `onVoiceToggle`, `onSettingsRequested`). Key codes: Enter sends `\r` (submit), S-Enter sends `\n` (newline without submit), TAB sends `\t` (respects SHF state for backtab), S-TAB sends `\033[Z` (backtab).
 
+`CompactPanel` is a 128dp panel with 3 rows of 6 buttons, providing all GameBoy features in a denser format. Row 1 (modifiers): ESC, CTL, SHF, TAB, S-TAB, S-ENT. Row 2 (navigation): ◀, ▲, ▼, ▶, Enter (↵), STT (🎤). Row 3 (macros): M1-M4, page cycle (PG), burger menu (☰). Macros are always visible (no swipe). Same `ControlPanelListener` interface.
+
 `CompactToolbar` is a 48dp horizontal bar shown above the soft keyboard (or permanently in fullscreen mode). Main row: ESC, CTL, SHF, TAB, arrows (◀▲▼▶), Enter (↵), STT (🎤), burger menu (☰). Swipe left for macro pages (3 pages of 4 buttons). Same `ControlPanelListener` interface as `GameBoyControlPanel`.
 
-Both panels use `onDetachedFromWindow()` to cancel arrow repeat runnables and unregister `SharedPreferences` listeners. Arrow repeat uses tracked `activeRepeatRunnable`/`activeRepeatView` fields with explicit `cancelRepeat()` on touch-up and detach.
+Panel mode (`KEY_PANEL_MODE` in SharedPreferences) controls which panel is shown: `"gameboy"` (default), `"compact"`, or `"fullscreen"`. In gameboy/compact modes, `CompactToolbar` replaces the main panel when the keyboard is visible (if toolbar enabled). In fullscreen mode, only `CompactToolbar` is shown. `TermuxActivity.updatePanelVisibility()` handles all transitions, syncing modifier and macro page state between panels. Migration from the old `KEY_FULLSCREEN_MODE` boolean is handled by `SettingsDialog.migratePanelMode()`.
+
+All three panels use `onDetachedFromWindow()` to cancel arrow repeat runnables and unregister `SharedPreferences` listeners. Arrow repeat uses tracked `activeRepeatRunnable`/`activeRepeatView` fields with explicit `cancelRepeat()` on touch-up and detach.
 
 ### Macro System
 
@@ -162,9 +166,9 @@ Results cached in SharedPreferences (`autotune_model`, `autotune_benchmark_ms`, 
 
 Haptic feedback on button presses is toggled via checkbox in `SettingsDialog` Interface section. Persisted in `SharedPreferences` ("voidterm_settings" / "haptic_feedback", default `true`). `GameBoyControlPanel` and `CompactToolbar` cache the value in a `volatile boolean hapticEnabled` field, invalidated via `OnSharedPreferenceChangeListener` (same pattern as `VoidTermTerminalViewClient`). The static `SettingsDialog.isHapticEnabled(Context)` method still exists for other callers but should not be used in hot paths.
 
-### Fullscreen Mode
+### Panel Mode
 
-Fullscreen mode hides the GameBoy control panel entirely and shows only the CompactToolbar (48dp), regardless of keyboard state. Toggled via "Fullscreen (toolbar only)" checkbox in `SettingsDialog` Interface section. Persisted in `SharedPreferences` ("voidterm_settings" / "fullscreen_mode", default `false`). When enabled, the "Compact toolbar above keyboard" checkbox is disabled (toolbar is forced on). Panel visibility is centralized in `TermuxActivity.updatePanelVisibility()`, called from keyboard listener, settings changes, bootstrap completion, and initial layout. `VoidTermTerminalViewClient.readControlKey()`/`readShiftKey()` check actual toolbar visibility (not keyboard state) to correctly read modifier keys in both modes.
+Panel mode is selected via a Spinner in `SettingsDialog` Interface section. Three modes: "GameBoy Panel" (`gameboy`, default), "Compact Panel" (`compact`), "Fullscreen (toolbar only)" (`fullscreen`). Persisted in `SharedPreferences` ("voidterm_settings" / "panel_mode"). In fullscreen mode, the "Compact toolbar above keyboard" checkbox is disabled (toolbar is forced on). The "Customize Layout" button is disabled when not in GameBoy mode. Panel visibility is centralized in `TermuxActivity.updatePanelVisibility()`, called from keyboard listener, settings changes, bootstrap completion, and initial layout. `VoidTermTerminalViewClient.readControlKey()`/`readShiftKey()` check actual panel visibility (CompactToolbar → CompactPanel → GameBoyControlPanel) to correctly read modifier keys in all modes.
 
 ### Tap-to-Toggle Keyboard
 

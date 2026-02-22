@@ -61,6 +61,7 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
     private TranscriptionOverlay transcriptionOverlay;
     private ExtraKeysConfig extraKeysConfig;
     private GameBoyControlPanel controlPanel;
+    private CompactPanel compactPanel;
     private CompactToolbar compactToolbar;
     private boolean keyboardVisible = false;
     private ViewTreeObserver.OnGlobalLayoutListener layoutListener;
@@ -138,6 +139,15 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         controlPanel.setBackgroundColor(InterfaceTheme.current(this).background);
         rootLayout.addView(controlPanel, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 2f));
+
+        // Compact panel (hidden by default, 128dp, 3 rows of 6 buttons)
+        compactPanel = new CompactPanel(this);
+        compactPanel.setControlPanelListener(this);
+        compactPanel.setVisibility(View.GONE);
+        rootLayout.addView(compactPanel, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 128,
+                        getResources().getDisplayMetrics())));
 
         // Compact toolbar (hidden by default, shown when keyboard is visible)
         compactToolbar = new CompactToolbar(this);
@@ -363,6 +373,8 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         // Hide screen and controls while installing
         screenFrame.setVisibility(android.view.View.GONE);
         controlPanel.setVisibility(android.view.View.GONE);
+        compactPanel.setVisibility(android.view.View.GONE);
+        compactToolbar.setVisibility(android.view.View.GONE);
     }
 
     private void updateInstallProgress(String message, int percent) {
@@ -609,49 +621,80 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         return keyboardVisible;
     }
 
+    public CompactPanel getCompactPanel() {
+        return compactPanel;
+    }
+
     public CompactToolbar getCompactToolbar() {
         return compactToolbar;
     }
 
     /**
-     * Recreate both control panels with the current theme.
+     * Recreate all control panels with the current theme.
      * Called from SettingsDialog after theme selection changes.
      */
     public void applyTheme() {
-        // Save state
-        boolean controlPanelVisible = controlPanel.getVisibility() == View.VISIBLE;
+        // Save layout params and positions
         int controlPanelIndex = rootLayout.indexOfChild(controlPanel);
         LinearLayout.LayoutParams controlPanelLp =
                 (LinearLayout.LayoutParams) controlPanel.getLayoutParams();
 
+        int compactPanelIndex = rootLayout.indexOfChild(compactPanel);
+        LinearLayout.LayoutParams compactPanelLp =
+                (LinearLayout.LayoutParams) compactPanel.getLayoutParams();
+
         int compactToolbarIndex = rootLayout.indexOfChild(compactToolbar);
         LinearLayout.LayoutParams compactToolbarLp =
                 (LinearLayout.LayoutParams) compactToolbar.getLayoutParams();
-        boolean compactToolbarVisible = compactToolbar.getVisibility() == View.VISIBLE;
 
-        // Remove old
+        // Remove old panels
         rootLayout.removeView(controlPanel);
+        rootLayout.removeView(compactPanel);
         rootLayout.removeView(compactToolbar);
 
         // Recreate (constructors read the current theme)
         controlPanel = new GameBoyControlPanel(this);
         controlPanel.setControlPanelListener(this);
         controlPanel.setBackgroundColor(InterfaceTheme.current(this).background);
-        controlPanel.setVisibility(controlPanelVisible ? View.VISIBLE : View.GONE);
+        controlPanel.setVisibility(View.GONE);
+
+        compactPanel = new CompactPanel(this);
+        compactPanel.setControlPanelListener(this);
+        compactPanel.setVisibility(View.GONE);
 
         compactToolbar = new CompactToolbar(this);
         compactToolbar.setControlPanelListener(this);
-        compactToolbar.setVisibility(compactToolbarVisible ? View.VISIBLE : View.GONE);
+        compactToolbar.setVisibility(View.GONE);
 
-        // Re-insert at same positions
-        int insertIndex = Math.min(controlPanelIndex, compactToolbarIndex);
-        if (controlPanelIndex < compactToolbarIndex) {
-            rootLayout.addView(controlPanel, insertIndex, controlPanelLp);
-            rootLayout.addView(compactToolbar, insertIndex + 1, compactToolbarLp);
-        } else {
-            rootLayout.addView(compactToolbar, insertIndex, compactToolbarLp);
-            rootLayout.addView(controlPanel, insertIndex + 1, controlPanelLp);
+        // Re-insert at original positions (sorted ascending)
+        int[] indices = {controlPanelIndex, compactPanelIndex, compactToolbarIndex};
+        View[] views = {controlPanel, compactPanel, compactToolbar};
+        LinearLayout.LayoutParams[] params = {controlPanelLp, compactPanelLp, compactToolbarLp};
+
+        // Simple insertion sort by index
+        for (int i = 1; i < 3; i++) {
+            int idx = indices[i];
+            View v = views[i];
+            LinearLayout.LayoutParams p = params[i];
+            int j = i - 1;
+            while (j >= 0 && indices[j] > idx) {
+                indices[j + 1] = indices[j];
+                views[j + 1] = views[j];
+                params[j + 1] = params[j];
+                j--;
+            }
+            indices[j + 1] = idx;
+            views[j + 1] = v;
+            params[j + 1] = p;
         }
+
+        int insertBase = indices[0];
+        for (int i = 0; i < 3; i++) {
+            rootLayout.addView(views[i], insertBase + i, params[i]);
+        }
+
+        // Restore correct visibility via updatePanelVisibility
+        updatePanelVisibility();
     }
 
     private void onKeyboardVisibilityChanged(boolean visible) {
@@ -659,45 +702,77 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
     }
 
     /**
-     * Set correct panel visibility based on fullscreen mode, toolbar preference,
+     * Set correct panel visibility based on panel mode, toolbar preference,
      * and keyboard state. Called from keyboard listener, settings changes,
      * and after bootstrap install.
+     *
+     * Panel modes:
+     * - "gameboy": GameBoy panel (default), CompactToolbar when keyboard visible
+     * - "compact": CompactPanel, CompactToolbar when keyboard visible
+     * - "fullscreen": CompactToolbar only (always visible)
      */
     public void updatePanelVisibility() {
         SharedPreferences prefs = getSharedPreferences(SettingsDialog.PREFS_NAME, MODE_PRIVATE);
-        boolean fullscreen = prefs.getBoolean(SettingsDialog.KEY_FULLSCREEN_MODE, false);
+        String panelMode = SettingsDialog.migratePanelMode(prefs);
 
-        boolean showingGameBoy = controlPanel.getVisibility() == View.VISIBLE;
-        boolean showingCompact = compactToolbar.getVisibility() == View.VISIBLE;
+        // Collect modifier/macro state from whichever panel is currently visible
+        boolean ctrl = false, shift = false;
+        int macroPage = 0;
+        if (controlPanel.getVisibility() == View.VISIBLE) {
+            ctrl = controlPanel.isCtrlActive();
+            shift = controlPanel.isShiftActive();
+            macroPage = controlPanel.getCurrentMacroPage();
+        } else if (compactPanel.getVisibility() == View.VISIBLE) {
+            ctrl = compactPanel.isCtrlActive();
+            shift = compactPanel.isShiftActive();
+            macroPage = compactPanel.getCurrentMacroPage();
+        } else if (compactToolbar.getVisibility() == View.VISIBLE) {
+            ctrl = compactToolbar.isCtrlActive();
+            shift = compactToolbar.isShiftActive();
+            macroPage = compactToolbar.getCurrentMacroPage();
+        }
 
-        if (fullscreen) {
-            if (showingGameBoy) {
-                compactToolbar.setCtrlActive(controlPanel.isCtrlActive());
-                compactToolbar.setShiftActive(controlPanel.isShiftActive());
-                compactToolbar.setCurrentMacroPage(controlPanel.getCurrentMacroPage());
-            }
-            controlPanel.setVisibility(View.GONE);
+        // Hide all panels first
+        controlPanel.setVisibility(View.GONE);
+        compactPanel.setVisibility(View.GONE);
+        compactToolbar.setVisibility(View.GONE);
+
+        if (SettingsDialog.PANEL_FULLSCREEN.equals(panelMode)) {
             compactToolbar.setVisibility(View.VISIBLE);
+            compactToolbar.setCtrlActive(ctrl);
+            compactToolbar.setShiftActive(shift);
+            compactToolbar.setCurrentMacroPage(macroPage);
             return;
         }
 
         boolean toolbarEnabled = prefs.getBoolean(SettingsDialog.KEY_COMPACT_TOOLBAR, true);
+
+        if (SettingsDialog.PANEL_COMPACT.equals(panelMode)) {
+            if (keyboardVisible && toolbarEnabled) {
+                compactToolbar.setVisibility(View.VISIBLE);
+                compactToolbar.setCtrlActive(ctrl);
+                compactToolbar.setShiftActive(shift);
+                compactToolbar.setCurrentMacroPage(macroPage);
+            } else {
+                compactPanel.setVisibility(View.VISIBLE);
+                compactPanel.setCtrlActive(ctrl);
+                compactPanel.setShiftActive(shift);
+                compactPanel.setCurrentMacroPage(macroPage);
+            }
+            return;
+        }
+
+        // Default: "gameboy"
         if (keyboardVisible && toolbarEnabled) {
-            if (showingGameBoy) {
-                compactToolbar.setCtrlActive(controlPanel.isCtrlActive());
-                compactToolbar.setShiftActive(controlPanel.isShiftActive());
-                compactToolbar.setCurrentMacroPage(controlPanel.getCurrentMacroPage());
-            }
-            controlPanel.setVisibility(View.GONE);
             compactToolbar.setVisibility(View.VISIBLE);
+            compactToolbar.setCtrlActive(ctrl);
+            compactToolbar.setShiftActive(shift);
+            compactToolbar.setCurrentMacroPage(macroPage);
         } else {
-            if (showingCompact) {
-                controlPanel.setCtrlActive(compactToolbar.isCtrlActive());
-                controlPanel.setShiftActive(compactToolbar.isShiftActive());
-                controlPanel.setCurrentMacroPage(compactToolbar.getCurrentMacroPage());
-            }
-            compactToolbar.setVisibility(View.GONE);
             controlPanel.setVisibility(View.VISIBLE);
+            controlPanel.setCtrlActive(ctrl);
+            controlPanel.setShiftActive(shift);
+            controlPanel.setCurrentMacroPage(macroPage);
         }
     }
 

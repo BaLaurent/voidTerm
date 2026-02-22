@@ -127,6 +127,14 @@ public class VoidTermTerminalViewClient implements TerminalViewClient,
             }
             return false;
         }
+        CompactPanel compact = activity.getCompactPanel();
+        if (compact != null && compact.getVisibility() == android.view.View.VISIBLE) {
+            if (compact.isCtrlActive()) {
+                compact.resetCtrl();
+                return true;
+            }
+            return false;
+        }
         GameBoyControlPanel panel = activity.getControlPanel();
         if (panel != null && panel.isCtrlActive()) {
             panel.resetCtrl();
@@ -146,6 +154,14 @@ public class VoidTermTerminalViewClient implements TerminalViewClient,
         if (toolbar != null && toolbar.getVisibility() == android.view.View.VISIBLE) {
             if (toolbar.isShiftActive()) {
                 toolbar.resetShift();
+                return true;
+            }
+            return false;
+        }
+        CompactPanel compact = activity.getCompactPanel();
+        if (compact != null && compact.getVisibility() == android.view.View.VISIBLE) {
+            if (compact.isShiftActive()) {
+                compact.resetShift();
                 return true;
             }
             return false;
