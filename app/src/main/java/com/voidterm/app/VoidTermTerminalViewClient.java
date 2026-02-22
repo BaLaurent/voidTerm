@@ -89,6 +89,14 @@ public class VoidTermTerminalViewClient implements TerminalViewClient {
 
     @Override
     public boolean readControlKey() {
+        if (activity.isKeyboardVisible()) {
+            CompactToolbar toolbar = activity.getCompactToolbar();
+            if (toolbar != null && toolbar.isCtrlActive()) {
+                toolbar.resetCtrl();
+                return true;
+            }
+            return false;
+        }
         GameBoyControlPanel panel = activity.getControlPanel();
         if (panel != null && panel.isCtrlActive()) {
             panel.resetCtrl();
@@ -104,6 +112,14 @@ public class VoidTermTerminalViewClient implements TerminalViewClient {
 
     @Override
     public boolean readShiftKey() {
+        if (activity.isKeyboardVisible()) {
+            CompactToolbar toolbar = activity.getCompactToolbar();
+            if (toolbar != null && toolbar.isShiftActive()) {
+                toolbar.resetShift();
+                return true;
+            }
+            return false;
+        }
         GameBoyControlPanel panel = activity.getControlPanel();
         if (panel != null && panel.isShiftActive()) {
             panel.resetShift();

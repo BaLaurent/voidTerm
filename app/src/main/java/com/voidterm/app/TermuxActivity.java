@@ -8,6 +8,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.graphics.Color;
+import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Bundle;
@@ -19,7 +20,9 @@ import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MenuItem;
 import android.view.View;
+import android.util.TypedValue;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
@@ -57,6 +60,8 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
     private TranscriptionOverlay transcriptionOverlay;
     private ExtraKeysConfig extraKeysConfig;
     private GameBoyControlPanel controlPanel;
+    private CompactToolbar compactToolbar;
+    private boolean keyboardVisible = false;
 
     private TermuxBootstrapInstaller bootstrapInstaller;
     private LinearLayout rootLayout;
@@ -127,7 +132,30 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         rootLayout.addView(controlPanel, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 2f));
 
+        // Compact toolbar (hidden by default, shown when keyboard is visible)
+        compactToolbar = new CompactToolbar(this);
+        compactToolbar.setControlPanelListener(this);
+        compactToolbar.setVisibility(View.GONE);
+        rootLayout.addView(compactToolbar, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 48,
+                        getResources().getDisplayMetrics())));
+
         setContentView(rootLayout);
+
+        // Keyboard visibility detection via layout height change
+        rootLayout.getViewTreeObserver().addOnGlobalLayoutListener(() -> {
+            Rect r = new Rect();
+            rootLayout.getWindowVisibleDisplayFrame(r);
+            int heightDiff = rootLayout.getRootView().getHeight() - r.height();
+            int threshold = (int) TypedValue.applyDimension(
+                    TypedValue.COMPLEX_UNIT_DIP, 150, getResources().getDisplayMetrics());
+            boolean isKeyboardNow = heightDiff > threshold;
+            if (isKeyboardNow != keyboardVisible) {
+                keyboardVisible = isKeyboardNow;
+                onKeyboardVisibilityChanged(isKeyboardNow);
+            }
+        });
 
         // Check if bootstrap is installed, install if needed
         bootstrapInstaller = new TermuxBootstrapInstaller(getFilesDir());
@@ -518,6 +546,30 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
      */
     public GameBoyControlPanel getControlPanel() {
         return controlPanel;
+    }
+
+    public boolean isKeyboardVisible() {
+        return keyboardVisible;
+    }
+
+    public CompactToolbar getCompactToolbar() {
+        return compactToolbar;
+    }
+
+    private void onKeyboardVisibilityChanged(boolean visible) {
+        SharedPreferences prefs = getSharedPreferences(SettingsDialog.PREFS_NAME, MODE_PRIVATE);
+        boolean toolbarEnabled = prefs.getBoolean(SettingsDialog.KEY_COMPACT_TOOLBAR, true);
+        if (!toolbarEnabled) return;
+
+        if (visible) {
+            compactToolbar.setCtrlActive(controlPanel.isCtrlActive());
+            compactToolbar.setShiftActive(controlPanel.isShiftActive());
+            controlPanel.setVisibility(View.GONE);
+            compactToolbar.setVisibility(View.VISIBLE);
+        } else {
+            compactToolbar.setVisibility(View.GONE);
+            controlPanel.setVisibility(View.VISIBLE);
+        }
     }
 
     // --- Context menu ("More" button) ---

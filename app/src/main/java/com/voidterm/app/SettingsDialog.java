@@ -6,6 +6,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -17,6 +18,7 @@ public class SettingsDialog {
 
     static final String PREFS_NAME = "voidterm_settings";
     static final String KEY_MODEL_NAME = "whisper_model_name";
+    static final String KEY_COMPACT_TOOLBAR = "compact_toolbar_enabled";
     static final String DEFAULT_MODEL = "ggml-base.bin";
     static final int REQUEST_MODEL_FILE = 1001;
 
@@ -54,6 +56,21 @@ public class SettingsDialog {
         browseBtn.setAllCaps(false);
         browseBtn.setTextSize(14);
         layout.addView(browseBtn);
+
+        // Section: Interface
+        TextView interfaceLabel = new TextView(activity);
+        interfaceLabel.setText("Interface");
+        interfaceLabel.setTextSize(16);
+        interfaceLabel.setPadding(0, 32, 0, 8);
+        layout.addView(interfaceLabel);
+
+        CheckBox toolbarToggle = new CheckBox(activity);
+        toolbarToggle.setText("Compact toolbar above keyboard");
+        toolbarToggle.setTextSize(14);
+        toolbarToggle.setChecked(prefs.getBoolean(KEY_COMPACT_TOOLBAR, true));
+        toolbarToggle.setOnCheckedChangeListener((btn, checked) ->
+                prefs.edit().putBoolean(KEY_COMPACT_TOOLBAR, checked).apply());
+        layout.addView(toolbarToggle);
 
         AlertDialog dialog = new AlertDialog.Builder(activity)
                 .setTitle("VoidTerm Settings")
