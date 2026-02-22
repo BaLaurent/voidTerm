@@ -98,6 +98,8 @@ Changes to files in `com.voidterm.contracts` affect the entire voice pipeline. `
 
 `CompactToolbar` is a 48dp horizontal bar shown above the soft keyboard (or permanently in fullscreen mode). Main row: ESC, CTL, SHF, TAB, arrows (◀▲▼▶), Enter (↵), STT (🎤), burger menu (☰). Swipe left for macro pages (3 pages of 4 buttons). Same `ControlPanelListener` interface as `GameBoyControlPanel`.
 
+Both panels use `onDetachedFromWindow()` to cancel arrow repeat runnables and unregister `SharedPreferences` listeners. Arrow repeat uses tracked `activeRepeatRunnable`/`activeRepeatView` fields with explicit `cancelRepeat()` on touch-up and detach.
+
 ### Macro System
 
 12 user-configurable macros displayed as 3 pages of 4 buttons in both `GameBoyControlPanel` (page cycle button above vertical stack) and `CompactToolbar` (page indicator button + swipe navigation across pages). Edited via long-press → `MacroEditDialog`. Persistence centralized in `MacroStore` (SharedPreferences "voidterm_macros", JSON array of 12 objects). Migrates automatically from the old 4-macro format by preserving existing macros and appending 8 defaults.
@@ -142,6 +144,7 @@ Key implementation details:
 - The overlay reuses `resultContainer` with hidden Send/Cancel buttons during streaming; buttons reappear when `showTranscription()` is called with the final text
 - Benchmark (`DeviceProfiler`) always passes `streaming=false` to avoid callback overhead during profiling
 - Default is OFF — behavior is 100% identical to pre-streaming when disabled
+- Streaming sends text directly to terminal PTY without review/cancel overlay — SettingsDialog shows an orange warning when enabled
 
 ### Auto-Tuning (DeviceProfiler)
 
@@ -157,7 +160,7 @@ Results cached in SharedPreferences (`autotune_model`, `autotune_benchmark_ms`, 
 
 ### Haptic Feedback
 
-Haptic feedback on button presses is toggled via checkbox in `SettingsDialog` Interface section. Persisted in `SharedPreferences` ("voidterm_settings" / "haptic_feedback", default `true`). Checked by `SettingsDialog.isHapticEnabled(Context)` in `GameBoyControlPanel`, `CompactToolbar`, and directly via `SharedPreferences` in `TerminalView`.
+Haptic feedback on button presses is toggled via checkbox in `SettingsDialog` Interface section. Persisted in `SharedPreferences` ("voidterm_settings" / "haptic_feedback", default `true`). `GameBoyControlPanel` and `CompactToolbar` cache the value in a `volatile boolean hapticEnabled` field, invalidated via `OnSharedPreferenceChangeListener` (same pattern as `VoidTermTerminalViewClient`). The static `SettingsDialog.isHapticEnabled(Context)` method still exists for other callers but should not be used in hot paths.
 
 ### Fullscreen Mode
 
@@ -182,17 +185,23 @@ The back key behavior is configurable via `SettingsDialog` (Spinner). Three mode
 
 `WhisperBridge.release()` guards `nativeFree()` behind a `thread.isAlive()` check after join — leak over crash. When `isDestroyed` is true during a pending callback, `onError` is posted instead of silently dropping the callback.
 
+Bootstrap callbacks in `TermuxActivity` guard with `if (isDestroyed()) return;` to prevent UI operations after Activity destruction. `TermuxActivity.onDestroy()` calls `viewClient.release()` to unregister its `SharedPreferences` listener.
+
 ### Panel State Synchronization
 
 Modifier keys (Ctrl/Shift) and macro page index are synced bidirectionally between `GameBoyControlPanel` and `CompactToolbar` in `TermuxActivity.updatePanelVisibility()`. Both panels expose `setCtrlActive(boolean)`, `setShiftActive(boolean)`, `getCurrentMacroPage()`, and `setCurrentMacroPage(int)`.
 
 ### SharedPreferences Caching
 
-`VoidTermTerminalViewClient` caches preference values (`tapToggleKeyboard`, `backKeyBehavior`) in volatile fields and invalidates via `OnSharedPreferenceChangeListener`, following the same pattern as `VoiceInputManager`. Avoids I/O on every tap or back key event.
+`VoidTermTerminalViewClient` caches preference values (`tapToggleKeyboard`, `backKeyBehavior`) in volatile fields and invalidates via `OnSharedPreferenceChangeListener`, following the same pattern as `VoiceInputManager`. `GameBoyControlPanel` and `CompactToolbar` use the same pattern for `hapticEnabled`. Avoids I/O on every tap, back key, or button press event.
 
-## Implementation Plan
+### SharedPreferences Key Constants
 
-`plans/IMPLEMENTATION_PLAN.md` defines 6 phases with strict file ownership per agent. Phases 1-3 (scaffolding, components, core systems) produce independent modules. Phase 4 (integration) wires everything into TermuxActivity. Phases 5-6 are docs and validation. Current status: Phases 1-4 implemented.
+All preference keys for `voidterm_settings` are centralized as `public static final` constants in `SettingsDialog` (e.g. `SettingsDialog.KEY_WHISPER_LANGUAGE`). Other classes (VoiceInputManager, DeviceProfiler, InterfaceTheme) reference these constants — never raw strings. This ensures the compiler catches key renames.
+
+## Code Review & Remediation
+
+`plans/CODE_REVIEW.md` documents 61 findings from a 5-agent parallel code review (concurrency, JNI, UI, architecture, config). Phases 1-3 completed (22 findings fixed). Phase 4 (refactoring structurel) pending. Completion reports in `plans/completed/`.
 
 ## Code Style
 
