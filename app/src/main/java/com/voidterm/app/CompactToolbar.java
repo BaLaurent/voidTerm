@@ -177,10 +177,8 @@ public class CompactToolbar extends FrameLayout {
             btn.setOnClickListener(v -> {
                 v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
                 if (listener != null) {
-                    listener.onSendToTerminal(macros[index][1]);
-                    v.postDelayed(() -> {
-                        if (listener != null) listener.onSendToTerminal("\r");
-                    }, 50);
+                    MacroExecutor.execute(macros[index][1],
+                            listener::onSendToTerminal, v.getHandler());
                 }
             });
             macroButtons[i] = btn;

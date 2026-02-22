@@ -47,6 +47,16 @@ public class MacroEditDialog {
         cmdLp.topMargin = dp(context, 12);
         layout.addView(cmdInput, cmdLp);
 
+        android.widget.TextView helpText = new android.widget.TextView(context);
+        helpText.setText("Keys: {ctrl+b} {esc} {up} {enter} {tab} {f1}\nEx: {ctrl+b}{up}  {esc}:wq{enter}");
+        helpText.setTextColor(0xFF888888);
+        helpText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        LinearLayout.LayoutParams helpLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        helpLp.topMargin = dp(context, 8);
+        layout.addView(helpText, helpLp);
+
         new AlertDialog.Builder(context)
                 .setTitle("Edit Macro")
                 .setView(layout)
