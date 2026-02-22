@@ -37,13 +37,19 @@ public class VoidTermTerminalViewClient implements TerminalViewClient {
     }
 
     @Override
-    public void onSingleTapUp(MotionEvent e) {
+    public boolean onSingleTapUp(MotionEvent e) {
+        SharedPreferences prefs = activity.getSharedPreferences(
+                SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE);
+        if (!prefs.getBoolean(SettingsDialog.KEY_TAP_TOGGLE_KEYBOARD, true)) {
+            return false;
+        }
         // Toggle soft keyboard on tap — toggleSoftInput is more reliable than
         // showSoftInput on Quest and other devices where focus state can be tricky
         InputMethodManager imm = (InputMethodManager) activity.getSystemService(Context.INPUT_METHOD_SERVICE);
         if (imm != null) {
             imm.toggleSoftInput(InputMethodManager.SHOW_IMPLICIT, 0);
         }
+        return true;
     }
 
     @Override

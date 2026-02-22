@@ -161,8 +161,9 @@ public final class TerminalView extends View {
                     stopTextSelectionMode();
                     return true;
                 }
-                requestFocus();
-                mClient.onSingleTapUp(event);
+                if (mClient.onSingleTapUp(event)) {
+                    requestFocus();
+                }
                 return true;
             }
 
@@ -251,7 +252,9 @@ public final class TerminalView extends View {
                 if (mGestureRecognizer.isInProgress()) return;
                 if (mClient.onLongPress(event)) return;
                 if (!isSelectingText()) {
-                    performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+                    if (getContext().getSharedPreferences("voidterm_settings", Context.MODE_PRIVATE).getBoolean("haptic_feedback", true)) {
+                        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+                    }
                     startTextSelectionMode(event);
                 }
             }

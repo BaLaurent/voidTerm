@@ -11,10 +11,14 @@ import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.RelativeLayout;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * GameBoy-inspired control panel optimized for right-hand VR raycast usage.
@@ -26,6 +30,8 @@ import android.widget.RelativeLayout;
  *   Primary (weight=2):    TAB + Enter stacked (far right, natural resting zone)
  *
  * Visual style: Nintendo Game Boy DMG-01 aesthetic.
+ *
+ * Supports a custom layout mode where buttons are freely positioned via drag & drop.
  */
 public class GameBoyControlPanel extends FrameLayout {
 
@@ -50,6 +56,9 @@ public class GameBoyControlPanel extends FrameLayout {
     private Button ctrlButton;
     private Button shiftButton;
 
+    private final Map<String, View> buttonRegistry = new LinkedHashMap<>();
+    private LayoutEditMode editMode;
+
     public interface ControlPanelListener {
         void onSendToTerminal(String text);
         void onVoiceToggle();
@@ -59,14 +68,23 @@ public class GameBoyControlPanel extends FrameLayout {
     public GameBoyControlPanel(Context context) {
         super(context);
         macros = MacroStore.load(context);
-        buildLayout(context);
+        Map<String, float[]> positions = LayoutStore.load(context);
+        if (positions != null) {
+            buildCustomLayout(context, positions);
+        } else {
+            buildLayout(context);
+        }
     }
 
     public void setControlPanelListener(ControlPanelListener listener) {
         this.listener = listener;
     }
 
+    // --- Default layout (weighted LinearLayout hierarchy) ---
+
     private void buildLayout(Context context) {
+        buttonRegistry.clear();
+
         LinearLayout root = new LinearLayout(context);
         root.setOrientation(LinearLayout.HORIZONTAL);
         root.setGravity(Gravity.CENTER_VERTICAL);
@@ -77,13 +95,7 @@ public class GameBoyControlPanel extends FrameLayout {
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
         // Burger menu button — bottom center (space bar position)
-        Button menuBtn = makeButton(context, dp(36), "\u2630", 16f, COLOR_MACRO, true);
-        menuBtn.setPadding(dp(24), 0, dp(24), 0);
-        menuBtn.setMinWidth(dp(80));
-        menuBtn.setOnClickListener(v -> {
-            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-            if (listener != null) listener.onSettingsRequested();
-        });
+        Button menuBtn = createMenuButton(context);
         FrameLayout.LayoutParams menuLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, dp(36),
                 Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
@@ -103,7 +115,307 @@ public class GameBoyControlPanel extends FrameLayout {
         root.addView(buildPrimaryZone(context), weightParams(2f));
     }
 
-    // --- Macro Zone (left): pill-shaped Start/Select style ---
+    // --- Custom layout (absolute positioning from stored percentages) ---
+
+    private void buildCustomLayout(Context context, Map<String, float[]> positions) {
+        buttonRegistry.clear();
+
+        createMenuButton(context);
+        createPageButton(context);
+        for (int i = 0; i < 4; i++) createMacroButton(context, i);
+        createEscButton(context);
+        createCtrlButton(context);
+        createShiftButton(context);
+        createSttButton(context);
+        createArrowButton(context, "arrow_up", "\u25B2", "\033[A");
+        createArrowButton(context, "arrow_down", "\u25BC", "\033[B");
+        createArrowButton(context, "arrow_left", "\u25C0", "\033[D");
+        createArrowButton(context, "arrow_right", "\u25B6", "\033[C");
+        createSTabButton(context);
+        createTabButton(context);
+        createEnterButton(context);
+        createSEnterButton(context);
+
+        for (Map.Entry<String, View> entry : buttonRegistry.entrySet()) {
+            View btn = entry.getValue();
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                    getButtonWidth(entry.getKey()),
+                    getButtonHeight(entry.getKey()));
+            addView(btn, lp);
+        }
+
+        getViewTreeObserver().addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
+            @Override
+            public void onGlobalLayout() {
+                getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                int pw = getWidth();
+                int ph = getHeight();
+                if (pw == 0 || ph == 0) return;
+                for (Map.Entry<String, View> entry : buttonRegistry.entrySet()) {
+                    float[] pos = positions.get(entry.getKey());
+                    if (pos != null) {
+                        View btn = entry.getValue();
+                        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) btn.getLayoutParams();
+                        lp.leftMargin = (int) (pos[0] * pw);
+                        lp.topMargin = (int) (pos[1] * ph);
+                        btn.setLayoutParams(lp);
+                    }
+                }
+            }
+        });
+    }
+
+    // --- Edit mode ---
+
+    public void enterEditMode() {
+        if (editMode != null) return;
+        post(() -> {
+            int pw = getWidth();
+            int ph = getHeight();
+            if (pw == 0 || ph == 0) return;
+
+            // Capture absolute positions of all registered buttons
+            Map<String, float[]> positions = new LinkedHashMap<>();
+            for (Map.Entry<String, View> entry : buttonRegistry.entrySet()) {
+                float[] absPos = getPositionInPanel(entry.getValue());
+                positions.put(entry.getKey(), new float[]{absPos[0] / pw, absPos[1] / ph});
+            }
+
+            // Detach buttons from their current parents
+            for (View btn : buttonRegistry.values()) {
+                ViewGroup parent = (ViewGroup) btn.getParent();
+                if (parent != null) parent.removeView(btn);
+            }
+
+            // Remove empty container views
+            removeAllViews();
+
+            // Re-add buttons with absolute positions
+            for (Map.Entry<String, View> entry : buttonRegistry.entrySet()) {
+                View v = entry.getValue();
+                float[] pos = positions.get(entry.getKey());
+                int w = v.getWidth() > 0 ? v.getWidth() : getButtonWidth(entry.getKey());
+                int h = v.getHeight() > 0 ? v.getHeight() : getButtonHeight(entry.getKey());
+                FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(w, h);
+                lp.leftMargin = (int) (pos[0] * pw);
+                lp.topMargin = (int) (pos[1] * ph);
+                addView(v, lp);
+            }
+
+            editMode = new LayoutEditMode(this, buttonRegistry, this::exitEditMode);
+        });
+    }
+
+    private void exitEditMode(boolean saved) {
+        editMode = null;
+        rebuildLayout();
+    }
+
+    private void rebuildLayout() {
+        removeAllViews();
+        Context context = getContext();
+        Map<String, float[]> positions = LayoutStore.load(context);
+        if (positions != null) {
+            buildCustomLayout(context, positions);
+        } else {
+            buildLayout(context);
+        }
+    }
+
+    private float[] getPositionInPanel(View child) {
+        float x = 0, y = 0;
+        View v = child;
+        while (v != this && v != null) {
+            x += v.getLeft();
+            y += v.getTop();
+            if (v.getParent() instanceof View) {
+                v = (View) v.getParent();
+            } else {
+                break;
+            }
+        }
+        return new float[]{x, y};
+    }
+
+    private int getButtonWidth(String key) {
+        switch (key) {
+            case "menu": return dp(80);
+            case "page": return dp(36);
+            case "macro1": case "macro2": case "macro3": case "macro4": return dp(40);
+            case "esc": case "ctl": case "shf": return dp(40);
+            case "arrow_up": case "arrow_down": case "arrow_left": case "arrow_right": return dp(48);
+            case "stt": return dp(52);
+            case "s_tab": return dp(40);
+            case "tab": return dp(48);
+            case "enter": return dp(52);
+            case "s_enter": return dp(40);
+            default: return dp(40);
+        }
+    }
+
+    private int getButtonHeight(String key) {
+        switch (key) {
+            case "menu": return dp(36);
+            case "page": return dp(24);
+            case "macro1": case "macro2": case "macro3": case "macro4": return dp(32);
+            default: return getButtonWidth(key);
+        }
+    }
+
+    // --- Button creation helpers (shared by buildLayout and buildCustomLayout) ---
+
+    private Button createMenuButton(Context ctx) {
+        Button btn = makeButton(ctx, dp(36), "\u2630", 16f, COLOR_MACRO, true);
+        btn.setPadding(dp(24), 0, dp(24), 0);
+        btn.setMinWidth(dp(80));
+        btn.setOnClickListener(v -> {
+            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (listener != null) listener.onSettingsRequested();
+        });
+        buttonRegistry.put("menu", btn);
+        return btn;
+    }
+
+    private Button createPageButton(Context ctx) {
+        pageButton = makeButton(ctx, dp(24), "1/3", 8f, COLOR_MACRO, true);
+        pageButton.setPadding(dp(8), 0, dp(8), 0);
+        pageButton.setMinWidth(dp(36));
+        pageButton.setOnClickListener(v -> {
+            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            currentPage = (currentPage + 1) % MacroStore.PAGE_COUNT;
+            updateMacroPage();
+        });
+        buttonRegistry.put("page", pageButton);
+        return pageButton;
+    }
+
+    private Button createMacroButton(Context ctx, int index) {
+        int actualIndex = currentPage * MacroStore.PAGE_SIZE + index;
+        Button btn = makeButton(ctx, dp(32), macros[actualIndex][0], 10f, COLOR_MACRO, true);
+        btn.setPadding(dp(12), 0, dp(12), 0);
+        btn.setMinWidth(dp(40));
+        btn.setOnClickListener(v -> {
+            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (listener != null) {
+                int ai = currentPage * MacroStore.PAGE_SIZE + index;
+                MacroExecutor.execute(macros[ai][1], listener::onSendToTerminal, v.getHandler());
+            }
+        });
+        btn.setOnLongClickListener(v -> {
+            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+            int ai = currentPage * MacroStore.PAGE_SIZE + index;
+            MacroEditDialog.show(ctx, macros[ai][0], macros[ai][1],
+                    (label, cmd) -> {
+                        int ai2 = currentPage * MacroStore.PAGE_SIZE + index;
+                        macros[ai2][0] = label;
+                        macros[ai2][1] = cmd;
+                        macroButtons[index].setText(label);
+                        MacroStore.save(ctx, macros);
+                    });
+            return true;
+        });
+        macroButtons[index] = btn;
+        buttonRegistry.put("macro" + (index + 1), btn);
+        return btn;
+    }
+
+    private Button createEscButton(Context ctx) {
+        Button btn = makeButton(ctx, dp(40), "ESC", 9f, COLOR_MODIFIER, false);
+        btn.setOnClickListener(v -> {
+            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (listener != null) listener.onSendToTerminal("\033");
+        });
+        buttonRegistry.put("esc", btn);
+        return btn;
+    }
+
+    private Button createCtrlButton(Context ctx) {
+        ctrlButton = makeButton(ctx, dp(40), "CTL", 9f, COLOR_MODIFIER, false);
+        ctrlButton.setOnClickListener(v -> {
+            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            ctrlActive = !ctrlActive;
+            updateButtonColor(ctrlButton, ctrlActive);
+        });
+        buttonRegistry.put("ctl", ctrlButton);
+        return ctrlButton;
+    }
+
+    private Button createShiftButton(Context ctx) {
+        shiftButton = makeButton(ctx, dp(40), "SHF", 9f, COLOR_MODIFIER, false);
+        shiftButton.setOnClickListener(v -> {
+            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            shiftActive = !shiftActive;
+            updateButtonColor(shiftButton, shiftActive);
+        });
+        buttonRegistry.put("shf", shiftButton);
+        return shiftButton;
+    }
+
+    private Button createSttButton(Context ctx) {
+        Button btn = makeButton(ctx, dp(52), "\uD83C\uDFA4", 18f, COLOR_DPAD, false);
+        btn.setOnClickListener(v -> {
+            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (listener != null) listener.onVoiceToggle();
+        });
+        buttonRegistry.put("stt", btn);
+        return btn;
+    }
+
+    private Button createArrowButton(Context ctx, String name, String label, String escSeq) {
+        Button btn = makeButton(ctx, dp(48), label, 14f, COLOR_DPAD, false);
+        setupArrowRepeat(btn, escSeq);
+        buttonRegistry.put(name, btn);
+        return btn;
+    }
+
+    private Button createSTabButton(Context ctx) {
+        Button btn = makeButton(ctx, dp(40), "S-TAB", 8f, COLOR_MODIFIER, false);
+        btn.setOnClickListener(v -> {
+            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (listener != null) listener.onSendToTerminal("\033[Z");
+        });
+        buttonRegistry.put("s_tab", btn);
+        return btn;
+    }
+
+    private Button createTabButton(Context ctx) {
+        Button btn = makeButton(ctx, dp(48), "TAB", 10f, COLOR_PRIMARY, false);
+        btn.setOnClickListener(v -> {
+            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (listener != null) {
+                if (shiftActive) {
+                    listener.onSendToTerminal("\033[Z");
+                    resetShift();
+                } else {
+                    listener.onSendToTerminal("\t");
+                }
+            }
+        });
+        buttonRegistry.put("tab", btn);
+        return btn;
+    }
+
+    private Button createEnterButton(Context ctx) {
+        Button btn = makeButton(ctx, dp(52), "\u21B5", 18f, COLOR_PRIMARY, false);
+        btn.setOnClickListener(v -> {
+            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (listener != null) listener.onSendToTerminal("\r");
+        });
+        buttonRegistry.put("enter", btn);
+        return btn;
+    }
+
+    private Button createSEnterButton(Context ctx) {
+        Button btn = makeButton(ctx, dp(40), "S-\u21B5", 8f, COLOR_MODIFIER, false);
+        btn.setOnClickListener(v -> {
+            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (listener != null) listener.onSendToTerminal("\n");
+        });
+        buttonRegistry.put("s_enter", btn);
+        return btn;
+    }
+
+    // --- Zone builders (layout-only, delegate button creation to helpers) ---
 
     private View buildMacroZone(Context context) {
         LinearLayout col = new LinearLayout(context);
@@ -112,51 +424,15 @@ public class GameBoyControlPanel extends FrameLayout {
 
         int spacing = dp(4);
 
-        // Page cycle button at top
-        pageButton = makeButton(context, dp(24), "1/3", 8f, COLOR_MACRO, true);
-        pageButton.setPadding(dp(8), 0, dp(8), 0);
-        pageButton.setMinWidth(dp(36));
-        pageButton.setOnClickListener(v -> {
-            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-            currentPage = (currentPage + 1) % MacroStore.PAGE_COUNT;
-            updateMacroPage();
-        });
+        Button pgBtn = createPageButton(context);
         LinearLayout.LayoutParams pageLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, dp(24));
         pageLp.gravity = Gravity.CENTER_HORIZONTAL;
         pageLp.bottomMargin = spacing;
-        col.addView(pageButton, pageLp);
+        col.addView(pgBtn, pageLp);
 
         for (int i = 0; i < 4; i++) {
-            Button btn = makeButton(context, dp(32), macros[currentPage * MacroStore.PAGE_SIZE + i][0], 10f, COLOR_MACRO, true);
-            btn.setPadding(dp(12), 0, dp(12), 0);
-            btn.setMinWidth(dp(40));
-            final int index = i;
-
-            btn.setOnClickListener(v -> {
-                if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-                if (listener != null) {
-                    int actualIndex = currentPage * MacroStore.PAGE_SIZE + index;
-                    MacroExecutor.execute(macros[actualIndex][1],
-                            listener::onSendToTerminal, v.getHandler());
-                }
-            });
-            btn.setOnLongClickListener(v -> {
-                if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
-                int actualIndex = currentPage * MacroStore.PAGE_SIZE + index;
-                MacroEditDialog.show(context, macros[actualIndex][0], macros[actualIndex][1],
-                        (label, cmd) -> {
-                            int ai = currentPage * MacroStore.PAGE_SIZE + index;
-                            macros[ai][0] = label;
-                            macros[ai][1] = cmd;
-                            macroButtons[index].setText(label);
-                            MacroStore.save(context, macros);
-                        });
-                return true;
-            });
-
-            macroButtons[i] = btn;
-
+            Button btn = createMacroButton(context, i);
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, dp(32));
             lp.gravity = Gravity.CENTER_HORIZONTAL;
@@ -172,8 +448,6 @@ public class GameBoyControlPanel extends FrameLayout {
         }
         pageButton.setText((currentPage + 1) + "/" + MacroStore.PAGE_COUNT);
     }
-
-    // --- D-pad Zone (center-right): cross cavity + arrows around STT center ---
 
     private View buildDpadZone(Context context) {
         RelativeLayout dpad = new RelativeLayout(context);
@@ -204,20 +478,15 @@ public class GameBoyControlPanel extends FrameLayout {
         dpad.addView(vBar, vLp);
 
         // STT center button — anchor for the cross
-        Button stt = makeButton(context, sttSize, "\uD83C\uDFA4", 18f, COLOR_DPAD, false);
+        Button stt = createSttButton(context);
         int sttId = View.generateViewId();
         stt.setId(sttId);
-        stt.setOnClickListener(v -> {
-            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-            if (listener != null) listener.onVoiceToggle();
-        });
         RelativeLayout.LayoutParams sttLp = new RelativeLayout.LayoutParams(sttSize, sttSize);
         sttLp.addRule(RelativeLayout.CENTER_IN_PARENT);
         dpad.addView(stt, sttLp);
 
         // UP — above STT
-        Button up = makeButton(context, arrowSize, "\u25B2", 14f, COLOR_DPAD, false);
-        setupArrowRepeat(up, "\033[A");
+        Button up = createArrowButton(context, "arrow_up", "\u25B2", "\033[A");
         RelativeLayout.LayoutParams upLp = new RelativeLayout.LayoutParams(arrowSize, arrowSize);
         upLp.addRule(RelativeLayout.ABOVE, sttId);
         upLp.addRule(RelativeLayout.CENTER_HORIZONTAL);
@@ -225,8 +494,7 @@ public class GameBoyControlPanel extends FrameLayout {
         dpad.addView(up, upLp);
 
         // DOWN — below STT
-        Button down = makeButton(context, arrowSize, "\u25BC", 14f, COLOR_DPAD, false);
-        setupArrowRepeat(down, "\033[B");
+        Button down = createArrowButton(context, "arrow_down", "\u25BC", "\033[B");
         RelativeLayout.LayoutParams downLp = new RelativeLayout.LayoutParams(arrowSize, arrowSize);
         downLp.addRule(RelativeLayout.BELOW, sttId);
         downLp.addRule(RelativeLayout.CENTER_HORIZONTAL);
@@ -234,8 +502,7 @@ public class GameBoyControlPanel extends FrameLayout {
         dpad.addView(down, downLp);
 
         // LEFT — left of STT
-        Button left = makeButton(context, arrowSize, "\u25C0", 14f, COLOR_DPAD, false);
-        setupArrowRepeat(left, "\033[D");
+        Button left = createArrowButton(context, "arrow_left", "\u25C0", "\033[D");
         RelativeLayout.LayoutParams leftLp = new RelativeLayout.LayoutParams(arrowSize, arrowSize);
         leftLp.addRule(RelativeLayout.LEFT_OF, sttId);
         leftLp.addRule(RelativeLayout.CENTER_VERTICAL);
@@ -243,8 +510,7 @@ public class GameBoyControlPanel extends FrameLayout {
         dpad.addView(left, leftLp);
 
         // RIGHT — right of STT
-        Button right = makeButton(context, arrowSize, "\u25B6", 14f, COLOR_DPAD, false);
-        setupArrowRepeat(right, "\033[C");
+        Button right = createArrowButton(context, "arrow_right", "\u25B6", "\033[C");
         RelativeLayout.LayoutParams rightLp = new RelativeLayout.LayoutParams(arrowSize, arrowSize);
         rightLp.addRule(RelativeLayout.RIGHT_OF, sttId);
         rightLp.addRule(RelativeLayout.CENTER_VERTICAL);
@@ -281,8 +547,6 @@ public class GameBoyControlPanel extends FrameLayout {
         });
     }
 
-    // --- Modifier Zone (center-left): ESC, CTL, SHF stacked vertically ---
-
     private View buildModifierZone(Context context) {
         LinearLayout col = new LinearLayout(context);
         col.setOrientation(LinearLayout.VERTICAL);
@@ -291,44 +555,25 @@ public class GameBoyControlPanel extends FrameLayout {
         int btnSize = dp(40);
         int spacing = dp(4);
 
-        // ESC
-        Button esc = makeButton(context, btnSize, "ESC", 9f, COLOR_MODIFIER, false);
-        esc.setOnClickListener(v -> {
-            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-            if (listener != null) listener.onSendToTerminal("\033");
-        });
+        Button esc = createEscButton(context);
         LinearLayout.LayoutParams escLp = new LinearLayout.LayoutParams(btnSize, btnSize);
         escLp.gravity = Gravity.CENTER_HORIZONTAL;
         col.addView(esc, escLp);
 
-        // CTL (sticky toggle)
-        ctrlButton = makeButton(context, btnSize, "CTL", 9f, COLOR_MODIFIER, false);
-        ctrlButton.setOnClickListener(v -> {
-            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-            ctrlActive = !ctrlActive;
-            updateButtonColor(ctrlButton, ctrlActive);
-        });
+        Button ctl = createCtrlButton(context);
         LinearLayout.LayoutParams ctlLp = new LinearLayout.LayoutParams(btnSize, btnSize);
         ctlLp.gravity = Gravity.CENTER_HORIZONTAL;
         ctlLp.topMargin = spacing;
-        col.addView(ctrlButton, ctlLp);
+        col.addView(ctl, ctlLp);
 
-        // SHF (sticky toggle)
-        shiftButton = makeButton(context, btnSize, "SHF", 9f, COLOR_MODIFIER, false);
-        shiftButton.setOnClickListener(v -> {
-            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-            shiftActive = !shiftActive;
-            updateButtonColor(shiftButton, shiftActive);
-        });
+        Button shf = createShiftButton(context);
         LinearLayout.LayoutParams shfLp = new LinearLayout.LayoutParams(btnSize, btnSize);
         shfLp.gravity = Gravity.CENTER_HORIZONTAL;
         shfLp.topMargin = spacing;
-        col.addView(shiftButton, shfLp);
+        col.addView(shf, shfLp);
 
         return col;
     }
-
-    // --- Primary Zone (far right): TAB + Enter (wine-red A/B style) ---
 
     private View buildPrimaryZone(Context context) {
         LinearLayout col = new LinearLayout(context);
@@ -338,54 +583,31 @@ public class GameBoyControlPanel extends FrameLayout {
         int spacing = dp(6);
 
         // S-TAB (Shift+Tab / backtab) — 40dp
+        Button sTab = createSTabButton(context);
         int sTabSize = dp(40);
-        Button sTab = makeButton(context, sTabSize, "S-TAB", 8f, COLOR_MODIFIER, false);
-        sTab.setOnClickListener(v -> {
-            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-            if (listener != null) listener.onSendToTerminal("\033[Z");
-        });
         LinearLayout.LayoutParams sTabLp = new LinearLayout.LayoutParams(sTabSize, sTabSize);
         sTabLp.gravity = Gravity.CENTER_HORIZONTAL;
         col.addView(sTab, sTabLp);
 
         // TAB — 48dp, matches arrow size
+        Button tab = createTabButton(context);
         int tabSize = dp(48);
-        Button tab = makeButton(context, tabSize, "TAB", 10f, COLOR_PRIMARY, false);
-        tab.setOnClickListener(v -> {
-            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-            if (listener != null) {
-                if (shiftActive) {
-                    listener.onSendToTerminal("\033[Z");
-                    resetShift();
-                } else {
-                    listener.onSendToTerminal("\t");
-                }
-            }
-        });
         LinearLayout.LayoutParams tabLp = new LinearLayout.LayoutParams(tabSize, tabSize);
         tabLp.gravity = Gravity.CENTER_HORIZONTAL;
         tabLp.topMargin = spacing;
         col.addView(tab, tabLp);
 
         // Enter — 52dp, largest button in the panel
+        Button enter = createEnterButton(context);
         int enterSize = dp(52);
-        Button enter = makeButton(context, enterSize, "\u21B5", 18f, COLOR_PRIMARY, false);
-        enter.setOnClickListener(v -> {
-            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-            if (listener != null) listener.onSendToTerminal("\r");
-        });
         LinearLayout.LayoutParams enterLp = new LinearLayout.LayoutParams(enterSize, enterSize);
         enterLp.gravity = Gravity.CENTER_HORIZONTAL;
         enterLp.topMargin = spacing;
         col.addView(enter, enterLp);
 
         // S-Enter (Shift+Enter / newline without submit) — 40dp
+        Button sEnter = createSEnterButton(context);
         int sEnterSize = dp(40);
-        Button sEnter = makeButton(context, sEnterSize, "S-\u21B5", 8f, COLOR_MODIFIER, false);
-        sEnter.setOnClickListener(v -> {
-            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-            if (listener != null) listener.onSendToTerminal("\n");
-        });
         LinearLayout.LayoutParams sEnterLp = new LinearLayout.LayoutParams(sEnterSize, sEnterSize);
         sEnterLp.gravity = Gravity.CENTER_HORIZONTAL;
         sEnterLp.topMargin = spacing;

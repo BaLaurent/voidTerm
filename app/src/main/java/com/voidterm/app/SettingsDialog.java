@@ -24,6 +24,9 @@ public class SettingsDialog {
     static final String PREFS_NAME = "voidterm_settings";
     static final String KEY_MODEL_NAME = "whisper_model_name";
     static final String KEY_COMPACT_TOOLBAR = "compact_toolbar_enabled";
+    static final String KEY_TAP_TOGGLE_KEYBOARD = "tap_toggle_keyboard";
+    static final String KEY_HAPTIC_FEEDBACK = "haptic_feedback";
+    static final String KEY_USE_GPU = "use_gpu";
     static final String KEY_BACK_BEHAVIOR = "back_key_behavior";
     static final String KEY_BACK_MACRO = "back_key_macro";
     static final String BACK_ESCAPE = "escape";
@@ -34,10 +37,17 @@ public class SettingsDialog {
 
     private final Activity activity;
     private final Runnable onBrowseAction;
+    private final Runnable onLayoutEditAction;
 
-    public SettingsDialog(Activity activity, Runnable onBrowseAction) {
+    public SettingsDialog(Activity activity, Runnable onBrowseAction, Runnable onLayoutEditAction) {
         this.activity = activity;
         this.onBrowseAction = onBrowseAction;
+        this.onLayoutEditAction = onLayoutEditAction;
+    }
+
+    static boolean isHapticEnabled(Context context) {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(KEY_HAPTIC_FEEDBACK, true);
     }
 
     public void show() {
@@ -81,6 +91,36 @@ public class SettingsDialog {
         toolbarToggle.setOnCheckedChangeListener((btn, checked) ->
                 prefs.edit().putBoolean(KEY_COMPACT_TOOLBAR, checked).apply());
         layout.addView(toolbarToggle);
+
+        CheckBox tapToggle = new CheckBox(activity);
+        tapToggle.setText("Tap terminal to toggle keyboard");
+        tapToggle.setTextSize(14);
+        tapToggle.setChecked(prefs.getBoolean(KEY_TAP_TOGGLE_KEYBOARD, true));
+        tapToggle.setOnCheckedChangeListener((btn, checked) ->
+                prefs.edit().putBoolean(KEY_TAP_TOGGLE_KEYBOARD, checked).apply());
+        layout.addView(tapToggle);
+
+        CheckBox hapticToggle = new CheckBox(activity);
+        hapticToggle.setText("Haptic feedback");
+        hapticToggle.setTextSize(14);
+        hapticToggle.setChecked(prefs.getBoolean(KEY_HAPTIC_FEEDBACK, true));
+        hapticToggle.setOnCheckedChangeListener((btn, checked) ->
+                prefs.edit().putBoolean(KEY_HAPTIC_FEEDBACK, checked).apply());
+        layout.addView(hapticToggle);
+
+        CheckBox gpuToggle = new CheckBox(activity);
+        gpuToggle.setText("Use GPU acceleration");
+        gpuToggle.setTextSize(14);
+        gpuToggle.setChecked(prefs.getBoolean(KEY_USE_GPU, false));
+        gpuToggle.setOnCheckedChangeListener((btn, checked) ->
+                prefs.edit().putBoolean(KEY_USE_GPU, checked).apply());
+        layout.addView(gpuToggle);
+
+        Button customLayoutBtn = new Button(activity);
+        customLayoutBtn.setText("Customize Layout");
+        customLayoutBtn.setAllCaps(false);
+        customLayoutBtn.setTextSize(14);
+        layout.addView(customLayoutBtn);
 
         // Section: Back Key
         TextView backLabel = new TextView(activity);
@@ -140,6 +180,11 @@ public class SettingsDialog {
             intent.addCategory(Intent.CATEGORY_OPENABLE);
             activity.startActivityForResult(intent, REQUEST_MODEL_FILE);
             dialog.dismiss();
+        });
+
+        customLayoutBtn.setOnClickListener(v -> {
+            dialog.dismiss();
+            if (onLayoutEditAction != null) onLayoutEditAction.run();
         });
 
         dialog.show();

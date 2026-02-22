@@ -1,14 +1,19 @@
 package com.voidterm.voice;
 
 import android.content.Context;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -26,18 +31,51 @@ public class WhisperBridge {
     private static final String TAG = "WhisperBridge";
     private static final String MODELS_DIR = "models";
     private static final int COPY_BUFFER_SIZE = 8192;
-    private static final long TRANSCRIPTION_TIMEOUT_MS = 30_000;
+    private static final long TRANSCRIPTION_TIMEOUT_MS = 120_000;
 
     static {
-        System.loadLibrary("whisper_jni");
+        boolean fp16Loaded = false;
+        if (isArm64Fp16Supported()) {
+            try {
+                System.loadLibrary("whisper_jni_v8fp16");
+                fp16Loaded = true;
+                Log.i(TAG, "Loaded FP16-optimized native library");
+            } catch (UnsatisfiedLinkError e) {
+                Log.w(TAG, "FP16 library not available, falling back to default", e);
+            }
+        }
+        if (!fp16Loaded) {
+            System.loadLibrary("whisper_jni");
+            Log.i(TAG, "Loaded default native library");
+        }
+    }
+
+    private static boolean isArm64Fp16Supported() {
+        if (!Build.SUPPORTED_ABIS[0].equals("arm64-v8a")) {
+            return false;
+        }
+        try (BufferedReader reader = new BufferedReader(new FileReader("/proc/cpuinfo"))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.startsWith("Features") && line.contains("fphp")) {
+                    return true;
+                }
+            }
+        } catch (IOException e) {
+            Log.w(TAG, "Could not read /proc/cpuinfo for FP16 detection", e);
+        }
+        return false;
     }
 
     // Native method declarations — must match JNI signatures exactly
-    private native long nativeInit(String modelPath);
-    private native String nativeTranscribe(long ctx, float[] audio, String lang);
+    private native long nativeInit(String modelPath, boolean useGpu);
+    private native String nativeTranscribe(long ctx, float[] audio, String lang, int nThreads);
     private native void nativeFree(long ctx);
     private native boolean nativeIsLoaded(long ctx);
     private native void nativeAbort();
+    private native String nativeGetSystemInfo();
+
+    private final int preferredThreadCount = CpuInfo.getPreferredThreadCount();
 
     private final Object contextLock = new Object();
     private long contextHandle = 0;
@@ -48,12 +86,45 @@ public class WhisperBridge {
     private volatile Runnable timeoutRunnable;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
+    private final List<String> logBuffer = new ArrayList<>();
+
+    private void bufLog(String msg) {
+        String entry = System.currentTimeMillis() + " " + msg;
+        Log.i(TAG, msg);
+        synchronized (logBuffer) {
+            logBuffer.add(entry);
+        }
+    }
+
+    private void bufErr(String msg) {
+        String entry = System.currentTimeMillis() + " ERROR: " + msg;
+        Log.e(TAG, msg);
+        synchronized (logBuffer) {
+            logBuffer.add(entry);
+        }
+    }
+
+    /**
+     * Get collected diagnostic logs and clear the buffer.
+     */
+    public String getAndClearLogs() {
+        synchronized (logBuffer) {
+            StringBuilder sb = new StringBuilder();
+            for (String line : logBuffer) {
+                sb.append(line).append('\n');
+            }
+            logBuffer.clear();
+            return sb.toString();
+        }
+    }
+
     /**
      * Callback for async operations.
      */
     public interface Callback {
         void onSuccess(String result);
         void onError(String error);
+        default void onProgress(String phase, int percent) {}
     }
 
     /**
@@ -64,9 +135,16 @@ public class WhisperBridge {
      * @param context Android context for asset access
      * @param modelFileName Model file name only (e.g., "ggml-base.bin").
      *                      The file is expected in assets/models/ and stored in {filesDir}/models/.
+     * @param useGpu Whether to enable GPU (Vulkan) acceleration
      * @param callback Result callback (called on main thread)
      */
-    public void loadModel(Context context, String modelFileName, Callback callback) {
+    public void loadModel(Context context, String modelFileName, boolean useGpu, Callback callback) {
+        if (isTranscribing.get()) {
+            Log.w(TAG, "Cannot load model while transcribing");
+            mainHandler.post(() -> callback.onError("Cannot load model during transcription"));
+            return;
+        }
+
         if (!isLoading.compareAndSet(false, true)) {
             Log.w(TAG, "Already loading a model, rejecting concurrent call");
             mainHandler.post(() -> callback.onError("Model load already in progress"));
@@ -81,42 +159,68 @@ public class WhisperBridge {
                 }
 
                 File modelFile = new File(modelsDir, modelFileName);
+                bufLog("Model file: " + modelFile.getAbsolutePath());
 
                 if (!modelFile.exists()) {
-                    Log.i(TAG, "Copying model from assets: " + modelFileName);
+                    bufLog("Copying model from assets: " + modelFileName);
                     try {
                         copyAssetToFile(context, MODELS_DIR + "/" + modelFileName, modelFile);
                     } catch (IOException e) {
                         isLoading.set(false);
-                        Log.e(TAG, "Model file not found in assets or filesDir: " + modelFileName);
+                        bufErr("Model file not found in assets or filesDir: " + modelFileName);
                         mainHandler.post(() -> callback.onError("Model file not found: " + modelFileName));
                         return;
                     }
                 }
 
-                long handle = nativeInit(modelFile.getAbsolutePath());
+                bufLog("Model size: " + (modelFile.length() / 1024 / 1024) + " MB");
+
+                mainHandler.post(() -> callback.onProgress("Loading model...", 10));
+
+                bufLog("Using GPU: " + useGpu + ", threads: " + preferredThreadCount);
+
+                long loadStart = System.currentTimeMillis();
+                long handle = nativeInit(modelFile.getAbsolutePath(), useGpu);
+                long loadTime = System.currentTimeMillis() - loadStart;
 
                 if (handle == 0) {
                     isLoading.set(false);
+                    bufErr("nativeInit returned 0 (failed) after " + loadTime + "ms");
                     mainHandler.post(() -> callback.onError("Failed to initialize whisper model"));
                     return;
                 }
 
+                bufLog("nativeInit OK in " + loadTime + "ms");
+
                 synchronized (contextLock) {
-                    // Free any previously loaded context before replacing
                     if (contextHandle != 0) {
                         nativeFree(contextHandle);
                     }
                     contextHandle = handle;
                 }
 
+                // Query system info (backends, SIMD flags)
+                try {
+                    String sysInfo = nativeGetSystemInfo();
+                    bufLog(sysInfo);
+                } catch (Exception e) {
+                    bufErr("nativeGetSystemInfo failed: " + e.getMessage());
+                }
+
+                if (isDestroyed) {
+                    isLoading.set(false);
+                    return;
+                }
+
+                mainHandler.post(() -> callback.onProgress("Model ready", 100));
+
                 isLoading.set(false);
-                Log.i(TAG, "Model loaded: " + modelFileName);
+                bufLog("Model loaded: " + modelFileName);
                 mainHandler.post(() -> callback.onSuccess("Model loaded"));
 
             } catch (Exception e) {
                 isLoading.set(false);
-                Log.e(TAG, "Failed to load model: " + modelFileName, e);
+                bufErr("Failed to load model: " + e.getMessage());
                 mainHandler.post(() -> callback.onError("Failed to load model: " + e.getMessage()));
             }
         }, "WhisperBridge-ModelLoad").start();
@@ -155,9 +259,12 @@ public class WhisperBridge {
             return;
         }
 
+        bufLog("Transcription start: " + audio.length + " samples ("
+                + String.format("%.1f", audio.length / 16000f) + "s), lang=" + language);
+
         Runnable watchdog = () -> {
             if (isTranscribing.compareAndSet(true, false)) {
-                Log.e(TAG, "Transcription timed out after " + TRANSCRIPTION_TIMEOUT_MS + "ms, aborting native");
+                bufErr("Transcription timed out after " + TRANSCRIPTION_TIMEOUT_MS + "ms");
                 nativeAbort();
                 if (!isDestroyed) {
                     callback.onError("Transcription timed out");
@@ -168,36 +275,39 @@ public class WhisperBridge {
 
         Thread thread = new Thread(() -> {
             try {
-                Log.i(TAG, "Starting transcription: " + audio.length + " samples, lang=" + language);
                 long startTime = System.currentTimeMillis();
 
-                String result = nativeTranscribe(handle, audio, language);
+                String result = nativeTranscribe(handle, audio, language, preferredThreadCount);
 
                 long elapsed = System.currentTimeMillis() - startTime;
-                Log.i(TAG, "Transcription completed in " + elapsed + "ms: " +
-                    (result != null ? result.length() : 0) + " chars");
+                bufLog("nativeTranscribe returned in " + elapsed + "ms, result="
+                        + (result != null ? result.length() + " chars" : "null"));
 
                 // Cancel watchdog — transcription completed normally
                 mainHandler.removeCallbacks(watchdog);
 
                 if (!isTranscribing.compareAndSet(true, false)) {
-                    // Watchdog already fired — discard this result
-                    Log.w(TAG, "Transcription completed after timeout, discarding result");
+                    bufErr("Transcription completed after timeout, discarding");
                     return;
                 }
 
                 if (isDestroyed) return;
 
                 mainHandler.post(() -> {
-                    if (result != null && !result.isEmpty()) {
-                        callback.onSuccess(result.trim());
+                    if (result == null) {
+                        bufErr("nativeTranscribe returned null");
+                        callback.onError("Transcription failed");
+                    } else if (result.trim().isEmpty()) {
+                        bufLog("No speech detected (empty result)");
+                        callback.onError("No speech detected");
                     } else {
-                        callback.onError("Empty transcription result");
+                        bufLog("Result: " + result.trim());
+                        callback.onSuccess(result.trim());
                     }
                 });
 
             } catch (Exception e) {
-                Log.e(TAG, "Transcription failed", e);
+                bufErr("Transcription exception: " + e.getMessage());
                 mainHandler.removeCallbacks(watchdog);
                 isTranscribing.set(false);
 

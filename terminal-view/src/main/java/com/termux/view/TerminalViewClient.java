@@ -25,8 +25,9 @@ public interface TerminalViewClient {
 
     /**
      * On a single tap on the terminal if terminal mouse reporting not enabled.
+     * Return true if the tap should also request focus on the terminal view.
      */
-    void onSingleTapUp(MotionEvent e);
+    boolean onSingleTapUp(MotionEvent e);
 
     boolean shouldBackButtonBeMappedToEscape();
 

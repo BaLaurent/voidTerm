@@ -1,5 +1,7 @@
 package com.voidterm.voice;
 
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
 import android.util.AttributeSet;
 import android.view.KeyEvent;
@@ -8,8 +10,8 @@ import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.ProgressBar;
 import android.widget.TextView;
-
 import com.voidterm.R;
 import com.voidterm.contracts.TranscriptionListener;
 import com.voidterm.contracts.VoiceState;
@@ -28,9 +30,17 @@ public class TranscriptionOverlay extends FrameLayout {
     private EditText transcriptionText;
     private Button sendButton;
     private Button cancelButton;
+    private View loadingContainer;
+    private ProgressBar loadingProgress;
+    private TextView loadingPhaseText;
+    private View errorContainer;
     private TextView errorText;
+    private View errorButtons;
+    private Button copyLogsButton;
+    private Button dismissErrorButton;
     private TranscriptionListener listener;
     private VoiceState currentState = VoiceState.IDLE;
+    private String pendingLogs;
 
     public TranscriptionOverlay(Context context) {
         super(context);
@@ -50,10 +60,17 @@ public class TranscriptionOverlay extends FrameLayout {
         transcribingContainer = findViewById(R.id.transcribing_container);
         resultContainer = findViewById(R.id.result_container);
         volumeBar = findViewById(R.id.volume_bar);
+        loadingContainer = findViewById(R.id.loading_container);
+        loadingProgress = findViewById(R.id.loading_progress);
+        loadingPhaseText = findViewById(R.id.loading_phase_text);
         transcriptionText = findViewById(R.id.transcription_text);
         sendButton = findViewById(R.id.btn_send);
         cancelButton = findViewById(R.id.btn_cancel);
+        errorContainer = findViewById(R.id.error_container);
         errorText = findViewById(R.id.error_text);
+        errorButtons = findViewById(R.id.error_buttons);
+        copyLogsButton = findViewById(R.id.btn_copy_logs);
+        dismissErrorButton = findViewById(R.id.btn_dismiss_error);
 
         // Volume bar: use scaleX for animation (avoids requestLayout)
         if (volumeBar != null) {
@@ -67,6 +84,20 @@ public class TranscriptionOverlay extends FrameLayout {
         });
 
         cancelButton.setOnClickListener(v -> {
+            if (listener != null) {
+                listener.onCancelRequested();
+            }
+        });
+
+        copyLogsButton.setOnClickListener(v -> {
+            if (pendingLogs != null) {
+                ClipboardManager clipboard = (ClipboardManager) context.getSystemService(Context.CLIPBOARD_SERVICE);
+                clipboard.setPrimaryClip(ClipData.newPlainText("VoidTerm Logs", pendingLogs));
+                copyLogsButton.setText("Copied!");
+            }
+        });
+
+        dismissErrorButton.setOnClickListener(v -> {
             if (listener != null) {
                 listener.onCancelRequested();
             }
@@ -109,14 +140,21 @@ public class TranscriptionOverlay extends FrameLayout {
     public void setState(VoiceState state) {
         currentState = state;
 
+        loadingContainer.setVisibility(GONE);
         recordingContainer.setVisibility(GONE);
         transcribingContainer.setVisibility(GONE);
         resultContainer.setVisibility(GONE);
-        errorText.setVisibility(GONE);
+        errorContainer.setVisibility(GONE);
 
         switch (state) {
+            case LOADING:
+                if (overlayRoot != null) overlayRoot.setVisibility(VISIBLE);
+                loadingContainer.setVisibility(VISIBLE);
+                break;
+
             case IDLE:
                 if (overlayRoot != null) overlayRoot.setVisibility(GONE);
+                pendingLogs = null;
                 break;
 
             case RECORDING:
@@ -148,8 +186,26 @@ public class TranscriptionOverlay extends FrameLayout {
 
             case ERROR:
                 if (overlayRoot != null) overlayRoot.setVisibility(VISIBLE);
-                errorText.setVisibility(VISIBLE);
+                errorContainer.setVisibility(VISIBLE);
+                if (pendingLogs != null) {
+                    errorButtons.setVisibility(VISIBLE);
+                    copyLogsButton.setText("Copy Logs");
+                } else {
+                    errorButtons.setVisibility(GONE);
+                }
                 break;
+        }
+    }
+
+    /**
+     * Update the loading progress bar and phase text.
+     */
+    public void setLoadingProgress(String phase, int percent) {
+        if (loadingProgress != null) {
+            loadingProgress.setProgress(percent);
+        }
+        if (loadingPhaseText != null) {
+            loadingPhaseText.setText(phase);
         }
     }
 
@@ -182,9 +238,19 @@ public class TranscriptionOverlay extends FrameLayout {
     }
 
     /**
-     * Show an error message in the overlay.
+     * Show an error message in the overlay (no logs, auto-dismiss applies).
      */
     public void showError(String message) {
+        showError(message, null);
+    }
+
+    /**
+     * Show an error message with optional diagnostic logs.
+     * When logs are provided, "Copy Logs" and "Dismiss" buttons are shown
+     * and auto-dismiss is suppressed (caller's responsibility).
+     */
+    public void showError(String message, String logs) {
+        pendingLogs = logs;
         if (errorText != null) {
             errorText.setText(message);
         }

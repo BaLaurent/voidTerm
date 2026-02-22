@@ -96,6 +96,14 @@ Supported tags: `{esc}`, `{enter}`, `{tab}`, `{up}`, `{down}`, `{left}`, `{right
 
 `SettingsDialog` (AlertDialog, programmatic layout like `TerminalStyleDialog`) lets users select a custom whisper.cpp model file via Android's `ACTION_OPEN_DOCUMENT` file picker. The selected file is copied to `{filesDir}/models/`, its name persisted in `SharedPreferences` ("voidterm_settings" / "whisper_model_name"), and hot-reloaded via `VoiceInputManager.reloadModel()`. Default model: `ggml-base.bin` (bundled in assets). `WhisperBridge.loadModel()` checks `{filesDir}/models/` first, falls back to assets, and returns a clear error if neither exists.
 
+### Haptic Feedback
+
+Haptic feedback on button presses is toggled via checkbox in `SettingsDialog` Interface section. Persisted in `SharedPreferences` ("voidterm_settings" / "haptic_feedback", default `true`). Checked by `SettingsDialog.isHapticEnabled(Context)` in `GameBoyControlPanel`, `CompactToolbar`, and directly via `SharedPreferences` in `TerminalView`.
+
+### Tap-to-Toggle Keyboard
+
+Tapping the terminal view toggles the soft keyboard via `VoidTermTerminalViewClient.onSingleTapUp()`. This behavior is controlled by `SharedPreferences` ("voidterm_settings" / "tap_toggle_keyboard", default `true`). Configurable via checkbox in `SettingsDialog` Interface section.
+
 ### Back Key Behavior
 
 The back key behavior is configurable via `SettingsDialog` (Spinner). Three modes persisted in `SharedPreferences` ("voidterm_settings" / "back_key_behavior"):

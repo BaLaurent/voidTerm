@@ -40,6 +40,7 @@ public class VoiceInputManager implements TranscriptionListener {
     private static final String TRANSCRIPTION_LANGUAGE = "en";
     private static final String PREFS_NAME = "voidterm_settings";
     private static final String KEY_MODEL_NAME = "whisper_model_name";
+    private static final String KEY_USE_GPU = "use_gpu";
 
     private final TranscriptionOverlay overlay;
     private final VoiceInputCallback callback;
@@ -89,27 +90,14 @@ public class VoiceInputManager implements TranscriptionListener {
 
         SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         String modelName = prefs.getString(KEY_MODEL_NAME, DEFAULT_MODEL);
+        boolean useGpu = prefs.getBoolean(KEY_USE_GPU, false);
 
-        whisperBridge.loadModel(context, modelName, new WhisperBridge.Callback() {
-            @Override
-            public void onSuccess(String result) {
-                Log.i(TAG, "Whisper model loaded: " + result);
-            }
+        synchronized (stateLock) {
+            currentState = VoiceState.LOADING;
+        }
+        dispatchStateChange(VoiceState.LOADING);
 
-            @Override
-            public void onError(String error) {
-                Log.e(TAG, "Failed to load whisper model: " + error);
-                // Surface model load failure to the user
-                VoiceState newState;
-                synchronized (stateLock) {
-                    currentState = VoiceState.ERROR;
-                    newState = VoiceState.ERROR;
-                }
-                overlay.showError("Voice model failed to load: " + error);
-                dispatchStateChange(newState);
-                mainHandler.postDelayed(errorDismissRunnable, ERROR_DISMISS_DELAY_MS);
-            }
-        });
+        whisperBridge.loadModel(context, modelName, useGpu, createLoadCallback());
     }
 
     /**
@@ -126,6 +114,19 @@ public class VoiceInputManager implements TranscriptionListener {
             currentState = VoiceState.RECORDING;
             newState = VoiceState.RECORDING;
         }
+
+        if (!whisperBridge.isModelLoaded()) {
+            Log.e(TAG, "PTT pressed but whisper model not loaded");
+            synchronized (stateLock) {
+                currentState = VoiceState.ERROR;
+                newState = VoiceState.ERROR;
+            }
+            overlay.showError("Voice model not ready");
+            dispatchStateChange(newState);
+            mainHandler.postDelayed(errorDismissRunnable, ERROR_DISMISS_DELAY_MS);
+            return;
+        }
+
         dispatchStateChange(newState);
 
         boolean started = audioCapture.startRecording();
@@ -170,6 +171,7 @@ public class VoiceInputManager implements TranscriptionListener {
                 VoiceState newState = null;
                 synchronized (stateLock) {
                     if (currentState != VoiceState.TRANSCRIBING) {
+                        Log.w(TAG, "Transcription success received in " + currentState + " state, discarding");
                         return;
                     }
                     currentState = VoiceState.SHOWING_RESULT;
@@ -184,14 +186,16 @@ public class VoiceInputManager implements TranscriptionListener {
                 VoiceState newState = null;
                 synchronized (stateLock) {
                     if (currentState != VoiceState.TRANSCRIBING) {
+                        Log.w(TAG, "Transcription error received in " + currentState + " state, discarding: " + error);
                         return;
                     }
                     currentState = VoiceState.ERROR;
                     newState = VoiceState.ERROR;
                 }
-                overlay.showError(error);
+                String logs = whisperBridge.getAndClearLogs();
+                overlay.showError(error, logs);
                 dispatchStateChange(newState);
-                mainHandler.postDelayed(errorDismissRunnable, ERROR_DISMISS_DELAY_MS);
+                // No auto-dismiss when logs are available — user dismisses manually
             }
         });
     }
@@ -228,25 +232,49 @@ public class VoiceInputManager implements TranscriptionListener {
     public void reloadModel(Context context, String modelFileName) {
         whisperBridge.release();
         whisperBridge = new WhisperBridge();
-        whisperBridge.loadModel(context, modelFileName, new WhisperBridge.Callback() {
+
+        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        boolean useGpu = prefs.getBoolean(KEY_USE_GPU, false);
+
+        synchronized (stateLock) {
+            currentState = VoiceState.LOADING;
+        }
+        dispatchStateChange(VoiceState.LOADING);
+
+        whisperBridge.loadModel(context, modelFileName, useGpu, createLoadCallback());
+    }
+
+    private WhisperBridge.Callback createLoadCallback() {
+        return new WhisperBridge.Callback() {
             @Override
             public void onSuccess(String result) {
-                Log.i(TAG, "Model reloaded: " + modelFileName);
+                Log.i(TAG, "Whisper model loaded: " + result);
+                VoiceState newState;
+                synchronized (stateLock) {
+                    currentState = VoiceState.IDLE;
+                    newState = VoiceState.IDLE;
+                }
+                dispatchStateChange(newState);
             }
 
             @Override
             public void onError(String error) {
-                Log.e(TAG, "Failed to reload model: " + error);
+                Log.e(TAG, "Failed to load whisper model: " + error);
                 VoiceState newState;
                 synchronized (stateLock) {
                     currentState = VoiceState.ERROR;
                     newState = VoiceState.ERROR;
                 }
-                overlay.showError("Model load failed: " + error);
+                overlay.showError("Voice model failed to load: " + error);
                 dispatchStateChange(newState);
                 mainHandler.postDelayed(errorDismissRunnable, ERROR_DISMISS_DELAY_MS);
             }
-        });
+
+            @Override
+            public void onProgress(String phase, int percent) {
+                overlay.setLoadingProgress(phase, percent);
+            }
+        };
     }
 
     /**
@@ -280,9 +308,12 @@ public class VoiceInputManager implements TranscriptionListener {
     public void onCancelRequested() {
         VoiceState newState = null;
         synchronized (stateLock) {
-            if (currentState != VoiceState.SHOWING_RESULT && currentState != VoiceState.EDITING) {
+            if (currentState != VoiceState.SHOWING_RESULT
+                    && currentState != VoiceState.EDITING
+                    && currentState != VoiceState.ERROR) {
                 return;
             }
+            mainHandler.removeCallbacks(errorDismissRunnable);
             currentState = VoiceState.IDLE;
             newState = VoiceState.IDLE;
         }

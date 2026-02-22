@@ -46,6 +46,31 @@ android {
     }
 }
 
+// Pre-generate Vulkan shaders on the host for cross-compilation to ARM64.
+// Runs generate_vulkan_shaders.sh before the native build, skips if already generated.
+tasks.register('generateVulkanShaders', Exec) {
+    def jniDir = file('src/main/jni')
+    def script = file("${jniDir}/generate_vulkan_shaders.sh")
+    def generatedCpp = file("${jniDir}/generated/vulkan-shaders/ggml-vulkan-shaders.cpp")
+    def shaderSources = fileTree("${jniDir}/whisper.cpp/ggml/src/ggml-vulkan/vulkan-shaders") {
+        include '*.comp', '*.cpp'
+    }
+
+    inputs.files(script, shaderSources)
+    outputs.file(generatedCpp)
+
+    commandLine 'bash', script.absolutePath
+    workingDir jniDir
+
+    onlyIf { !generatedCpp.exists() }
+}
+
+tasks.configureEach { task ->
+    if (task.name.startsWith('externalNativeBuild')) {
+        task.dependsOn 'generateVulkanShaders'
+    }
+}
+
 dependencies {
     implementation project(':terminal-emulator')
     implementation project(':terminal-view')

@@ -482,7 +482,7 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
 
     @Override
     public void onSettingsRequested() {
-        new SettingsDialog(this, null).show();
+        new SettingsDialog(this, null, () -> controlPanel.enterEditMode()).show();
     }
 
     @Override

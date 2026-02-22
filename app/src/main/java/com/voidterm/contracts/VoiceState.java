@@ -2,9 +2,10 @@ package com.voidterm.contracts;
 
 /**
  * Voice input state machine states.
- * Transitions: Idle→Recording→Transcribing→ShowingResult→Editing→Error→Idle
+ * Transitions: Loading→Idle→Recording→Transcribing→ShowingResult→Editing→Error→Idle
  */
 public enum VoiceState {
+    LOADING,
     IDLE,
     RECORDING,
     TRANSCRIBING,
