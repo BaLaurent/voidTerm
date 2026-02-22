@@ -107,7 +107,24 @@ Supported tags: `{esc}`, `{enter}`, `{tab}`, `{up}`, `{down}`, `{left}`, `{right
 
 ### Settings & Model Selection
 
-`SettingsDialog` (AlertDialog, programmatic layout like `TerminalStyleDialog`) lets users select a custom whisper.cpp model file via Android's `ACTION_OPEN_DOCUMENT` file picker. The selected file is copied to `{filesDir}/models/`, its name persisted in `SharedPreferences` ("voidterm_settings" / "whisper_model_name"), and hot-reloaded via `VoiceInputManager.reloadModel()`. Default model: `ggml-base.bin` (bundled in assets). `WhisperBridge.loadModel()` checks `{filesDir}/models/` first, falls back to assets, and returns a clear error if neither exists. GPU toggle (default off) controls `whisper_context_params.use_gpu`. `WhisperBridge` selects the FP16 library variant at runtime if `Build.VERSION.SDK_INT >= 27` (ARMv8.2-A support).
+`SettingsDialog` (AlertDialog in ScrollView, programmatic layout like `TerminalStyleDialog`) lets users select a custom whisper.cpp model file via Android's `ACTION_OPEN_DOCUMENT` file picker. The selected file is copied to `{filesDir}/models/`, its name persisted in `SharedPreferences` ("voidterm_settings" / "whisper_model_name"), and hot-reloaded via `VoiceInputManager.reloadModel()`. Default model: `ggml-base.bin` (bundled in assets). `WhisperBridge.loadModel()` checks `{filesDir}/models/` first, falls back to assets, and returns a clear error if neither exists. GPU toggle (default off) controls `whisper_context_params.use_gpu`. `WhisperBridge` selects the FP16 library variant at runtime if `Build.VERSION.SDK_INT >= 27` (ARMv8.2-A support).
+
+### Transcription Settings
+
+Configurable whisper.cpp transcription parameters in `SettingsDialog` "Transcription" section. All settings persisted in `SharedPreferences` ("voidterm_settings") and read fresh at each transcription via `VoiceInputManager.buildWhisperConfig()` → `WhisperConfig` (immutable data class in `com.voidterm.voice`).
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `whisper_language` | String | `"en"` | ISO 639-1 code or `"auto"` for auto-detect |
+| `whisper_translate` | boolean | `false` | Translate output to English |
+| `whisper_initial_prompt` | String | `""` | Vocabulary hints for domain terms |
+| `whisper_temperature` | float | `0.0f` | Sampling temperature (0=precise, 1=creative) |
+| `whisper_beam_search` | boolean | `false` | Use beam search instead of greedy sampling |
+| `whisper_beam_size` | int | `5` | Beam width (2-8, only when beam search enabled) |
+| `whisper_thread_override` | int | `0` | Thread count (0=auto via CpuInfo) |
+| `whisper_suppress_non_speech` | boolean | `false` | Filter non-speech tokens |
+
+Data flow: `SharedPreferences → WhisperConfig → WhisperBridge.transcribe() → nativeTranscribe() JNI → whisper_full_params`. The JNI layer receives flattened primitives (not the config object) to avoid `GetFieldID` boilerplate. Advanced settings (temperature, beam search, threads, suppress) are hidden behind a collapsible "Advanced..." button in the UI.
 
 ### Haptic Feedback
 

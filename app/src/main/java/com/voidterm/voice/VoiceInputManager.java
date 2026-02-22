@@ -37,7 +37,6 @@ public class VoiceInputManager implements TranscriptionListener {
     private static final long VOLUME_POLL_INTERVAL_MS = 100;
     private static final long ERROR_DISMISS_DELAY_MS = 3000;
     private static final String DEFAULT_MODEL = "ggml-base.bin";
-    private static final String TRANSCRIPTION_LANGUAGE = "en";
     private static final String PREFS_NAME = "voidterm_settings";
     private static final String KEY_MODEL_NAME = "whisper_model_name";
     private static final String KEY_USE_GPU = "use_gpu";
@@ -45,6 +44,7 @@ public class VoiceInputManager implements TranscriptionListener {
     private final TranscriptionOverlay overlay;
     private final VoiceInputCallback callback;
     private final AudioCapture audioCapture;
+    private final Context appContext;
     private WhisperBridge whisperBridge;
     private final Handler mainHandler;
 
@@ -82,6 +82,7 @@ public class VoiceInputManager implements TranscriptionListener {
     public VoiceInputManager(Context context, TranscriptionOverlay overlay, VoiceInputCallback callback) {
         this.overlay = overlay;
         this.callback = callback;
+        this.appContext = context.getApplicationContext();
         this.mainHandler = new Handler(Looper.getMainLooper());
         this.audioCapture = new AudioCapture();
         this.whisperBridge = new WhisperBridge();
@@ -165,7 +166,7 @@ public class VoiceInputManager implements TranscriptionListener {
         // Blocking call OUTSIDE stateLock to avoid holding lock during thread join
         float[] pcmData = audioCapture.stopRecording();
 
-        whisperBridge.transcribe(pcmData, TRANSCRIPTION_LANGUAGE, new WhisperBridge.Callback() {
+        whisperBridge.transcribe(pcmData, buildWhisperConfig(), new WhisperBridge.Callback() {
             @Override
             public void onSuccess(String text) {
                 VoiceState newState = null;
@@ -242,6 +243,20 @@ public class VoiceInputManager implements TranscriptionListener {
         dispatchStateChange(VoiceState.LOADING);
 
         whisperBridge.loadModel(context, modelFileName, useGpu, createLoadCallback());
+    }
+
+    private WhisperConfig buildWhisperConfig() {
+        SharedPreferences prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        return new WhisperConfig(
+                prefs.getString("whisper_language", "en"),
+                prefs.getBoolean("whisper_translate", false),
+                prefs.getString("whisper_initial_prompt", ""),
+                prefs.getFloat("whisper_temperature", 0.0f),
+                prefs.getBoolean("whisper_beam_search", false),
+                prefs.getInt("whisper_beam_size", 5),
+                prefs.getInt("whisper_thread_override", 0),
+                prefs.getBoolean("whisper_suppress_non_speech", false)
+        );
     }
 
     private WhisperBridge.Callback createLoadCallback() {

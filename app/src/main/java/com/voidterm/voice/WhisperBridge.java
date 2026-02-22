@@ -69,7 +69,10 @@ public class WhisperBridge {
 
     // Native method declarations — must match JNI signatures exactly
     private native long nativeInit(String modelPath, boolean useGpu);
-    private native String nativeTranscribe(long ctx, float[] audio, String lang, int nThreads);
+    private native String nativeTranscribe(long ctx, float[] audio, String lang, int nThreads,
+                                              boolean translate, String initialPrompt,
+                                              float temperature, boolean useBeamSearch,
+                                              int beamSize, boolean suppressNonSpeech);
     private native void nativeFree(long ctx);
     private native boolean nativeIsLoaded(long ctx);
     private native void nativeAbort();
@@ -231,10 +234,10 @@ public class WhisperBridge {
      * Only one transcription at a time — concurrent calls are rejected.
      *
      * @param audio PCM float32 audio samples at 16kHz mono
-     * @param language Language code (e.g., "en", "fr")
+     * @param config Transcription configuration (language, translate, beam search, etc.)
      * @param callback Result callback (called on main thread)
      */
-    public void transcribe(float[] audio, String language, Callback callback) {
+    public void transcribe(float[] audio, WhisperConfig config, Callback callback) {
         if (!isTranscribing.compareAndSet(false, true)) {
             Log.w(TAG, "Already transcribing, rejecting concurrent call");
             mainHandler.post(() -> callback.onError("Transcription already in progress"));
@@ -259,8 +262,11 @@ public class WhisperBridge {
             return;
         }
 
+        int threadCount = config.threadCount > 0 ? config.threadCount : preferredThreadCount;
+
         bufLog("Transcription start: " + audio.length + " samples ("
-                + String.format("%.1f", audio.length / 16000f) + "s), lang=" + language);
+                + String.format("%.1f", audio.length / 16000f) + "s), lang=" + config.language
+                + ", translate=" + config.translate + ", threads=" + threadCount);
 
         Runnable watchdog = () -> {
             if (isTranscribing.compareAndSet(true, false)) {
@@ -277,7 +283,11 @@ public class WhisperBridge {
             try {
                 long startTime = System.currentTimeMillis();
 
-                String result = nativeTranscribe(handle, audio, language, preferredThreadCount);
+                String prompt = (config.initialPrompt != null && !config.initialPrompt.isEmpty())
+                        ? config.initialPrompt : null;
+                String result = nativeTranscribe(handle, audio, config.language, threadCount,
+                        config.translate, prompt, config.temperature,
+                        config.useBeamSearch, config.beamSize, config.suppressNonSpeech);
 
                 long elapsed = System.currentTimeMillis() - startTime;
                 bufLog("nativeTranscribe returned in " + elapsed + "ms, result="

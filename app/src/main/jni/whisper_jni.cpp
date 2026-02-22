@@ -1,5 +1,6 @@
 #include <jni.h>
 #include <string>
+#include <cstring>
 #include <android/log.h>
 #include "whisper.h"
 #include "ggml-backend.h"
@@ -56,7 +57,10 @@ Java_com_voidterm_voice_WhisperBridge_nativeInit(JNIEnv *env, jobject /* this */
 JNIEXPORT jstring JNICALL
 Java_com_voidterm_voice_WhisperBridge_nativeTranscribe(JNIEnv *env, jobject /* this */,
                                                        jlong contextPtr, jfloatArray audioData,
-                                                       jstring language, jint nThreads) {
+                                                       jstring language, jint nThreads,
+                                                       jboolean translate, jstring initialPrompt,
+                                                       jfloat temperature, jboolean useBeamSearch,
+                                                       jint beamSize, jboolean suppressNonSpeech) {
     if (contextPtr == 0) {
         LOGE("Whisper context is null");
         return nullptr;
@@ -75,11 +79,18 @@ Java_com_voidterm_voice_WhisperBridge_nativeTranscribe(JNIEnv *env, jobject /* t
 
     const char *lang = env->GetStringUTFChars(language, nullptr);
 
+    // Get initial prompt string (may be null)
+    const char *prompt = nullptr;
+    if (initialPrompt != nullptr) {
+        prompt = env->GetStringUTFChars(initialPrompt, nullptr);
+    }
+
     // Reset abort flag before each transcription
     g_abort_flag = 0;
 
-    // Match official whisper.android example params as closely as possible
-    struct whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+    // Select sampling strategy based on user preference
+    struct whisper_full_params params = whisper_full_default_params(
+            useBeamSearch ? WHISPER_SAMPLING_BEAM_SEARCH : WHISPER_SAMPLING_GREEDY);
     params.print_realtime   = false;
     params.print_progress   = false;
     params.print_timestamps = false;
@@ -93,12 +104,27 @@ Java_com_voidterm_voice_WhisperBridge_nativeTranscribe(JNIEnv *env, jobject /* t
     params.abort_callback_user_data = nullptr;
     params.progress_callback = voidterm_progress_cb;
     params.progress_callback_user_data = nullptr;
+    params.translate = translate;
+    params.temperature = temperature;
+    params.suppress_non_speech_tokens = suppressNonSpeech;
+
+    if (useBeamSearch) {
+        params.beam_search.beam_size = beamSize > 0 ? beamSize : 5;
+    }
+
+    if (prompt && prompt[0] != '\0') {
+        params.initial_prompt = prompt;
+    }
+
     if (lang) {
+        // whisper.cpp natively accepts "auto" to auto-detect language then transcribe.
+        // Do NOT use params.detect_language — that flag detects and returns without transcribing.
         params.language = lang;
     }
 
-    LOGI(">>> whisper_full() ENTER: %d samples (%.1fs), lang=%s, n_threads=%d",
-         audioLength, audioLength / 16000.0f, lang ? lang : "auto", params.n_threads);
+    LOGI(">>> whisper_full() ENTER: %d samples (%.1fs), lang=%s, n_threads=%d, translate=%d, beam=%d, temp=%.2f",
+         audioLength, audioLength / 16000.0f, lang ? lang : "auto", params.n_threads,
+         (int)translate, (int)useBeamSearch, temperature);
 
     whisper_reset_timings(ctx);  // match official example
 
@@ -108,6 +134,7 @@ Java_com_voidterm_voice_WhisperBridge_nativeTranscribe(JNIEnv *env, jobject /* t
 
     env->ReleaseFloatArrayElements(audioData, audio, JNI_ABORT);
     if (lang) env->ReleaseStringUTFChars(language, lang);
+    if (prompt) env->ReleaseStringUTFChars(initialPrompt, prompt);
 
     if (result != 0) {
         LOGE("Whisper transcription failed with code: %d", result);
