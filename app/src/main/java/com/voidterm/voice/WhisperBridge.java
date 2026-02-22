@@ -335,6 +335,44 @@ public class WhisperBridge {
     }
 
     /**
+     * Synchronous benchmark: transcribe audio with minimal greedy params.
+     * Used by DeviceProfiler to measure device performance after model load.
+     * Returns elapsed time in ms, or -1 on error.
+     *
+     * Package-private — only called from DeviceProfiler on a background thread.
+     */
+    long benchmarkTranscribe(float[] audio, int threadCount) {
+        if (!isTranscribing.compareAndSet(false, true)) {
+            Log.w(TAG, "Cannot benchmark while transcribing");
+            return -1;
+        }
+
+        long handle;
+        synchronized (contextLock) {
+            handle = contextHandle;
+        }
+
+        if (handle == 0) {
+            isTranscribing.set(false);
+            Log.e(TAG, "Cannot benchmark: model not loaded");
+            return -1;
+        }
+
+        try {
+            long start = System.currentTimeMillis();
+            nativeTranscribe(handle, audio, "en", threadCount,
+                    false, null, 0.0f, false, 5, false, true);
+            long elapsed = System.currentTimeMillis() - start;
+            return elapsed;
+        } catch (Exception e) {
+            Log.e(TAG, "Benchmark transcription failed", e);
+            return -1;
+        } finally {
+            isTranscribing.set(false);
+        }
+    }
+
+    /**
      * Check if the whisper model is loaded and ready.
      */
     public boolean isModelLoaded() {

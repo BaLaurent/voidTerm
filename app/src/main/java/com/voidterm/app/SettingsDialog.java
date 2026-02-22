@@ -16,6 +16,8 @@ import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
 
+import com.voidterm.voice.DeviceProfiler;
+
 /**
  * Settings dialog for VoidTerm. Displays current whisper model name
  * and provides a file picker to select a different model.
@@ -27,6 +29,7 @@ public class SettingsDialog {
     static final String KEY_COMPACT_TOOLBAR = "compact_toolbar_enabled";
     static final String KEY_TAP_TOGGLE_KEYBOARD = "tap_toggle_keyboard";
     static final String KEY_HAPTIC_FEEDBACK = "haptic_feedback";
+    static final String KEY_FULLSCREEN_MODE = "fullscreen_mode";
     static final String KEY_USE_GPU = "use_gpu";
     static final String KEY_BACK_BEHAVIOR = "back_key_behavior";
     static final String KEY_BACK_MACRO = "back_key_macro";
@@ -118,6 +121,25 @@ public class SettingsDialog {
         transLabel.setTextSize(16);
         transLabel.setPadding(0, 32, 0, 8);
         layout.addView(transLabel);
+
+        // Auto-tune tier info
+        String tierName = prefs.getString(DeviceProfiler.KEY_AUTOTUNE_TIER, null);
+        if (tierName != null) {
+            long benchmarkMs = prefs.getLong(DeviceProfiler.KEY_AUTOTUNE_BENCHMARK_MS, 0);
+            TextView tierInfo = new TextView(activity);
+            tierInfo.setText("Performance: " + tierName.charAt(0)
+                    + tierName.substring(1).toLowerCase() + " (" + benchmarkMs + "ms)");
+            tierInfo.setTextSize(13);
+            tierInfo.setPadding(0, 0, 0, 8);
+            layout.addView(tierInfo);
+        }
+
+        // Reset to Auto button
+        Button resetAutoBtn = new Button(activity);
+        resetAutoBtn.setText("Reset to Auto");
+        resetAutoBtn.setAllCaps(false);
+        resetAutoBtn.setTextSize(13);
+        layout.addView(resetAutoBtn);
 
         // Language spinner
         String currentLang = prefs.getString(KEY_WHISPER_LANGUAGE, "en");
@@ -225,6 +247,7 @@ public class SettingsDialog {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int pos, long id) {
                 prefs.edit().putInt(KEY_WHISPER_BEAM_SIZE, pos + 2).apply();
+                DeviceProfiler.markUserOverride(prefs, KEY_WHISPER_BEAM_SIZE);
             }
             @Override
             public void onNothingSelected(AdapterView<?> parent) {}
@@ -237,6 +260,7 @@ public class SettingsDialog {
         beamToggle.setChecked(prefs.getBoolean(KEY_WHISPER_BEAM_SEARCH, false));
         beamToggle.setOnCheckedChangeListener((btn, checked) -> {
             prefs.edit().putBoolean(KEY_WHISPER_BEAM_SEARCH, checked).apply();
+            DeviceProfiler.markUserOverride(prefs, KEY_WHISPER_BEAM_SEARCH);
             beamSizeRow.setVisibility(checked ? View.VISIBLE : View.GONE);
         });
         advancedContainer.addView(beamToggle);
@@ -247,8 +271,10 @@ public class SettingsDialog {
         suppressToggle.setText("Suppress non-speech tokens");
         suppressToggle.setTextSize(14);
         suppressToggle.setChecked(prefs.getBoolean(KEY_WHISPER_SUPPRESS_NON_SPEECH, false));
-        suppressToggle.setOnCheckedChangeListener((btn, checked) ->
-                prefs.edit().putBoolean(KEY_WHISPER_SUPPRESS_NON_SPEECH, checked).apply());
+        suppressToggle.setOnCheckedChangeListener((btn, checked) -> {
+                prefs.edit().putBoolean(KEY_WHISPER_SUPPRESS_NON_SPEECH, checked).apply();
+                DeviceProfiler.markUserOverride(prefs, KEY_WHISPER_SUPPRESS_NON_SPEECH);
+        });
         advancedContainer.addView(suppressToggle);
 
         // Thread count override
@@ -283,8 +309,10 @@ public class SettingsDialog {
         proportionalToggle.setText("Proportional audio context (experimental)");
         proportionalToggle.setTextSize(14);
         proportionalToggle.setChecked(prefs.getBoolean(KEY_WHISPER_PROPORTIONAL_CONTEXT, false));
-        proportionalToggle.setOnCheckedChangeListener((btn, checked) ->
-                prefs.edit().putBoolean(KEY_WHISPER_PROPORTIONAL_CONTEXT, checked).apply());
+        proportionalToggle.setOnCheckedChangeListener((btn, checked) -> {
+                prefs.edit().putBoolean(KEY_WHISPER_PROPORTIONAL_CONTEXT, checked).apply();
+                DeviceProfiler.markUserOverride(prefs, KEY_WHISPER_PROPORTIONAL_CONTEXT);
+        });
         advancedContainer.addView(proportionalToggle);
 
         layout.addView(advancedContainer);
@@ -322,13 +350,28 @@ public class SettingsDialog {
         });
         layout.addView(themeSpinner);
 
+        boolean isFullscreen = prefs.getBoolean(KEY_FULLSCREEN_MODE, false);
+
+        CheckBox fullscreenToggle = new CheckBox(activity);
+        fullscreenToggle.setText("Fullscreen (toolbar only)");
+        fullscreenToggle.setTextSize(14);
+        fullscreenToggle.setChecked(isFullscreen);
+        layout.addView(fullscreenToggle);
+
         CheckBox toolbarToggle = new CheckBox(activity);
         toolbarToggle.setText("Compact toolbar above keyboard");
         toolbarToggle.setTextSize(14);
         toolbarToggle.setChecked(prefs.getBoolean(KEY_COMPACT_TOOLBAR, true));
+        toolbarToggle.setEnabled(!isFullscreen);
         toolbarToggle.setOnCheckedChangeListener((btn, checked) ->
                 prefs.edit().putBoolean(KEY_COMPACT_TOOLBAR, checked).apply());
         layout.addView(toolbarToggle);
+
+        fullscreenToggle.setOnCheckedChangeListener((btn, checked) -> {
+            prefs.edit().putBoolean(KEY_FULLSCREEN_MODE, checked).apply();
+            toolbarToggle.setEnabled(!checked);
+            ((TermuxActivity) activity).updatePanelVisibility();
+        });
 
         CheckBox tapToggle = new CheckBox(activity);
         tapToggle.setText("Tap terminal to toggle keyboard");
@@ -422,6 +465,12 @@ public class SettingsDialog {
         customLayoutBtn.setOnClickListener(v -> {
             dialog.dismiss();
             if (onLayoutEditAction != null) onLayoutEditAction.run();
+        });
+
+        resetAutoBtn.setOnClickListener(v -> {
+            DeviceProfiler.resetToAuto(prefs);
+            dialog.dismiss();
+            if (onModelReloadNeeded != null) onModelReloadNeeded.run();
         });
 
         dialog.show();

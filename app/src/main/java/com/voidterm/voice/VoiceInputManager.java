@@ -122,7 +122,7 @@ public class VoiceInputManager implements TranscriptionListener {
         }
         dispatchStateChange(VoiceState.LOADING);
 
-        whisperBridge.loadModel(context, modelName, useGpu, createLoadCallback());
+        whisperBridge.loadModel(context, modelName, useGpu, createLoadCallback(modelName));
     }
 
     /**
@@ -275,7 +275,7 @@ public class VoiceInputManager implements TranscriptionListener {
         }
         dispatchStateChange(VoiceState.LOADING);
 
-        whisperBridge.loadModel(context, modelFileName, useGpu, createLoadCallback());
+        whisperBridge.loadModel(context, modelFileName, useGpu, createLoadCallback(modelFileName));
     }
 
     private WhisperConfig buildWhisperConfig() {
@@ -302,17 +302,44 @@ public class VoiceInputManager implements TranscriptionListener {
         );
     }
 
-    private WhisperBridge.Callback createLoadCallback() {
+    private WhisperBridge.Callback createLoadCallback(String modelName) {
         return new WhisperBridge.Callback() {
             @Override
             public void onSuccess(String result) {
                 Log.i(TAG, "Whisper model loaded: " + result);
-                VoiceState newState;
-                synchronized (stateLock) {
-                    currentState = VoiceState.IDLE;
-                    newState = VoiceState.IDLE;
+
+                SharedPreferences prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                DeviceProfiler.migrateIfNeeded(prefs);
+
+                if (DeviceProfiler.needsProfiling(prefs, modelName)) {
+                    overlay.setLoadingProgress("Optimizing...", 95);
+                    new Thread(() -> {
+                        int threadCount = CpuInfo.getPreferredThreadCount();
+                        DeviceProfiler.Result profResult = DeviceProfiler.profile(whisperBridge, threadCount);
+                        if (profResult != null) {
+                            DeviceProfiler.applyDefaults(prefs, modelName, profResult);
+                            cachedConfig = null;
+                        } else {
+                            Log.w(TAG, "Profiling failed, keeping existing settings");
+                        }
+                        mainHandler.post(() -> {
+                            VoiceState newState;
+                            synchronized (stateLock) {
+                                currentState = VoiceState.IDLE;
+                                newState = VoiceState.IDLE;
+                            }
+                            dispatchStateChange(newState);
+                        });
+                    }, "DeviceProfiler").start();
+                } else {
+                    Log.i(TAG, "Auto-tune cache hit for " + modelName);
+                    VoiceState newState;
+                    synchronized (stateLock) {
+                        currentState = VoiceState.IDLE;
+                        newState = VoiceState.IDLE;
+                    }
+                    dispatchStateChange(newState);
                 }
-                dispatchStateChange(newState);
             }
 
             @Override

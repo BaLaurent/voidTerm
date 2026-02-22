@@ -78,6 +78,7 @@ Critical build details:
 - **AudioCapture-Thread:** AudioRecord read loop (active only during recording)
 - **WhisperBridge-Transcribe:** whisper.cpp inference (burst 2-4s)
 - **WhisperBridge-ModelLoad:** one-time model loading from assets
+- **DeviceProfiler:** one-time benchmark after model load (1s synthetic audio)
 
 Thread safety: `VoiceInputManager` uses `stateLock` for state transitions, dispatches outside lock. `WhisperBridge` uses `AtomicBoolean` guards for concurrent call rejection. `AudioCapture` uses `lock` for start/stop.
 
@@ -126,9 +127,25 @@ Configurable whisper.cpp transcription parameters in `SettingsDialog` "Transcrip
 
 Data flow: `SharedPreferences → WhisperConfig → WhisperBridge.transcribe() → nativeTranscribe() JNI → whisper_full_params`. The JNI layer receives flattened primitives (not the config object) to avoid `GetFieldID` boilerplate. Advanced settings (temperature, beam search, threads, suppress) are hidden behind a collapsible "Advanced..." button in the UI.
 
+### Auto-Tuning (DeviceProfiler)
+
+`DeviceProfiler` (stateless utility in `com.voidterm.voice`) auto-tunes transcription parameters after model load. Runs a 1s synthetic audio benchmark (440Hz sine, greedy decode) once per model, classifies the device into a performance tier, and writes optimal defaults.
+
+| Tier | Benchmark (1s audio) | beam_search | beam_size | proportional_context | suppress_non_speech |
+|---|---|---|---|---|---|
+| FAST | < 600ms | true | 5 | true | true |
+| MEDIUM | 600-1200ms | true | 3 | true | true |
+| SLOW | > 1200ms | false | -- | true | true |
+
+Results cached in SharedPreferences (`autotune_model`, `autotune_benchmark_ms`, `autotune_tier`). User manual changes tracked in `user_overrides` (StringSet) — auto-tuning never overwrites overridden keys. "Reset to Auto" button in SettingsDialog clears overrides and forces re-profiling. One-time migration detects pre-existing parameter changes and marks them as user overrides.
+
 ### Haptic Feedback
 
 Haptic feedback on button presses is toggled via checkbox in `SettingsDialog` Interface section. Persisted in `SharedPreferences` ("voidterm_settings" / "haptic_feedback", default `true`). Checked by `SettingsDialog.isHapticEnabled(Context)` in `GameBoyControlPanel`, `CompactToolbar`, and directly via `SharedPreferences` in `TerminalView`.
+
+### Fullscreen Mode
+
+Fullscreen mode hides the GameBoy control panel entirely and shows only the CompactToolbar (48dp), regardless of keyboard state. Toggled via "Fullscreen (toolbar only)" checkbox in `SettingsDialog` Interface section. Persisted in `SharedPreferences` ("voidterm_settings" / "fullscreen_mode", default `false`). When enabled, the "Compact toolbar above keyboard" checkbox is disabled (toolbar is forced on). Panel visibility is centralized in `TermuxActivity.updatePanelVisibility()`, called from keyboard listener, settings changes, bootstrap completion, and initial layout. `VoidTermTerminalViewClient.readControlKey()`/`readShiftKey()` check actual toolbar visibility (not keyboard state) to correctly read modifier keys in both modes.
 
 ### Tap-to-Toggle Keyboard
 

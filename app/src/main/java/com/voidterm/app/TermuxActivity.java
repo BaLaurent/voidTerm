@@ -158,6 +158,9 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
             }
         });
 
+        // Apply initial panel visibility (respects fullscreen mode preference)
+        updatePanelVisibility();
+
         // Check if bootstrap is installed, install if needed
         bootstrapInstaller = new TermuxBootstrapInstaller(getFilesDir());
 
@@ -361,7 +364,7 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
             installProgressView = null;
         }
         screenFrame.setVisibility(android.view.View.VISIBLE);
-        controlPanel.setVisibility(android.view.View.VISIBLE);
+        updatePanelVisibility();
         terminalView.requestFocus();
     }
 
@@ -637,11 +640,28 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
     }
 
     private void onKeyboardVisibilityChanged(boolean visible) {
-        SharedPreferences prefs = getSharedPreferences(SettingsDialog.PREFS_NAME, MODE_PRIVATE);
-        boolean toolbarEnabled = prefs.getBoolean(SettingsDialog.KEY_COMPACT_TOOLBAR, true);
-        if (!toolbarEnabled) return;
+        updatePanelVisibility();
+    }
 
-        if (visible) {
+    /**
+     * Set correct panel visibility based on fullscreen mode, toolbar preference,
+     * and keyboard state. Called from keyboard listener, settings changes,
+     * and after bootstrap install.
+     */
+    public void updatePanelVisibility() {
+        SharedPreferences prefs = getSharedPreferences(SettingsDialog.PREFS_NAME, MODE_PRIVATE);
+        boolean fullscreen = prefs.getBoolean(SettingsDialog.KEY_FULLSCREEN_MODE, false);
+
+        if (fullscreen) {
+            compactToolbar.setCtrlActive(controlPanel.isCtrlActive());
+            compactToolbar.setShiftActive(controlPanel.isShiftActive());
+            controlPanel.setVisibility(View.GONE);
+            compactToolbar.setVisibility(View.VISIBLE);
+            return;
+        }
+
+        boolean toolbarEnabled = prefs.getBoolean(SettingsDialog.KEY_COMPACT_TOOLBAR, true);
+        if (keyboardVisible && toolbarEnabled) {
             compactToolbar.setCtrlActive(controlPanel.isCtrlActive());
             compactToolbar.setShiftActive(controlPanel.isShiftActive());
             controlPanel.setVisibility(View.GONE);

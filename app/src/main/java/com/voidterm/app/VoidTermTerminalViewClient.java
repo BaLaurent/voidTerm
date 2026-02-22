@@ -99,9 +99,9 @@ public class VoidTermTerminalViewClient implements TerminalViewClient {
 
     @Override
     public boolean readControlKey() {
-        if (activity.isKeyboardVisible()) {
-            CompactToolbar toolbar = activity.getCompactToolbar();
-            if (toolbar != null && toolbar.isCtrlActive()) {
+        CompactToolbar toolbar = activity.getCompactToolbar();
+        if (toolbar != null && toolbar.getVisibility() == android.view.View.VISIBLE) {
+            if (toolbar.isCtrlActive()) {
                 toolbar.resetCtrl();
                 return true;
             }
@@ -122,9 +122,9 @@ public class VoidTermTerminalViewClient implements TerminalViewClient {
 
     @Override
     public boolean readShiftKey() {
-        if (activity.isKeyboardVisible()) {
-            CompactToolbar toolbar = activity.getCompactToolbar();
-            if (toolbar != null && toolbar.isShiftActive()) {
+        CompactToolbar toolbar = activity.getCompactToolbar();
+        if (toolbar != null && toolbar.getVisibility() == android.view.View.VISIBLE) {
+            if (toolbar.isShiftActive()) {
                 toolbar.resetShift();
                 return true;
             }
