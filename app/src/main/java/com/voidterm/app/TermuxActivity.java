@@ -20,6 +20,7 @@ import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MenuItem;
 import android.view.View;
+import android.view.inputmethod.InputMethodManager;
 import android.util.TypedValue;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
@@ -406,7 +407,38 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         if (questInputHandler != null && questInputHandler.onKeyDown(keyCode, event)) {
             return true;
         }
+        if (keyCode == KeyEvent.KEYCODE_BACK && handleCustomBackKey()) {
+            return true;
+        }
         return super.onKeyDown(keyCode, event);
+    }
+
+    private boolean handleCustomBackKey() {
+        SharedPreferences prefs = getSharedPreferences(SettingsDialog.PREFS_NAME, MODE_PRIVATE);
+        String behavior = prefs.getString(SettingsDialog.KEY_BACK_BEHAVIOR, SettingsDialog.BACK_ESCAPE);
+
+        if (SettingsDialog.BACK_ESCAPE.equals(behavior)) {
+            return false; // let TerminalView handle it
+        }
+
+        if (SettingsDialog.BACK_TOGGLE_KEYBOARD.equals(behavior)) {
+            InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (imm != null) {
+                imm.toggleSoftInput(InputMethodManager.SHOW_IMPLICIT, 0);
+            }
+            return true;
+        }
+
+        if (SettingsDialog.BACK_MACRO.equals(behavior)) {
+            String macro = prefs.getString(SettingsDialog.KEY_BACK_MACRO, "");
+            if (!macro.isEmpty() && terminalSession != null) {
+                MacroExecutor.execute(macro, terminalSession::write,
+                        terminalView != null ? terminalView.getHandler() : null);
+            }
+            return true;
+        }
+
+        return false;
     }
 
     @Override

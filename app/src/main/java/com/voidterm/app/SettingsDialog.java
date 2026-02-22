@@ -5,9 +5,14 @@ import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.view.View;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
+import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.Spinner;
 import android.widget.TextView;
 
 /**
@@ -19,6 +24,11 @@ public class SettingsDialog {
     static final String PREFS_NAME = "voidterm_settings";
     static final String KEY_MODEL_NAME = "whisper_model_name";
     static final String KEY_COMPACT_TOOLBAR = "compact_toolbar_enabled";
+    static final String KEY_BACK_BEHAVIOR = "back_key_behavior";
+    static final String KEY_BACK_MACRO = "back_key_macro";
+    static final String BACK_ESCAPE = "escape";
+    static final String BACK_TOGGLE_KEYBOARD = "toggle_keyboard";
+    static final String BACK_MACRO = "macro";
     static final String DEFAULT_MODEL = "ggml-base.bin";
     static final int REQUEST_MODEL_FILE = 1001;
 
@@ -72,10 +82,56 @@ public class SettingsDialog {
                 prefs.edit().putBoolean(KEY_COMPACT_TOOLBAR, checked).apply());
         layout.addView(toolbarToggle);
 
+        // Section: Back Key
+        TextView backLabel = new TextView(activity);
+        backLabel.setText("Back Key");
+        backLabel.setTextSize(16);
+        backLabel.setPadding(0, 32, 0, 8);
+        layout.addView(backLabel);
+
+        String[] backOptions = {"Escape", "Toggle Keyboard", "Macro"};
+        String[] backValues = {BACK_ESCAPE, BACK_TOGGLE_KEYBOARD, BACK_MACRO};
+        String currentBack = prefs.getString(KEY_BACK_BEHAVIOR, BACK_ESCAPE);
+
+        Spinner backSpinner = new Spinner(activity);
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(activity,
+                android.R.layout.simple_spinner_item, backOptions);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        backSpinner.setAdapter(adapter);
+
+        int selectedIndex = 0;
+        for (int i = 0; i < backValues.length; i++) {
+            if (backValues[i].equals(currentBack)) { selectedIndex = i; break; }
+        }
+        backSpinner.setSelection(selectedIndex);
+
+        EditText macroField = new EditText(activity);
+        macroField.setHint("Macro command (e.g. {ctrl+c})");
+        macroField.setTextSize(14);
+        macroField.setSingleLine(true);
+        macroField.setText(prefs.getString(KEY_BACK_MACRO, ""));
+        macroField.setVisibility(BACK_MACRO.equals(currentBack) ? View.VISIBLE : View.GONE);
+
+        backSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int pos, long id) {
+                prefs.edit().putString(KEY_BACK_BEHAVIOR, backValues[pos]).apply();
+                macroField.setVisibility(pos == 2 ? View.VISIBLE : View.GONE);
+            }
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {}
+        });
+
+        layout.addView(backSpinner);
+        layout.addView(macroField);
+
         AlertDialog dialog = new AlertDialog.Builder(activity)
                 .setTitle("VoidTerm Settings")
                 .setView(layout)
-                .setPositiveButton("Close", null)
+                .setPositiveButton("Close", (d, w) -> {
+                    String macroText = macroField.getText().toString();
+                    prefs.edit().putString(KEY_BACK_MACRO, macroText).apply();
+                })
                 .create();
 
         browseBtn.setOnClickListener(v -> {

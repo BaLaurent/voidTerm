@@ -1,6 +1,7 @@
 package com.voidterm.app;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -47,7 +48,10 @@ public class VoidTermTerminalViewClient implements TerminalViewClient {
 
     @Override
     public boolean shouldBackButtonBeMappedToEscape() {
-        return true;
+        SharedPreferences prefs = activity.getSharedPreferences(
+                SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE);
+        return SettingsDialog.BACK_ESCAPE.equals(
+                prefs.getString(SettingsDialog.KEY_BACK_BEHAVIOR, SettingsDialog.BACK_ESCAPE));
     }
 
     @Override
