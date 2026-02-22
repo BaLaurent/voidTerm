@@ -96,6 +96,8 @@ Changes to files in `com.voidterm.contracts` affect the entire voice pipeline. `
 
 `GameBoyControlPanel` provides a touchscreen control panel styled like a Game Boy. Includes D-pad, modifier keys (Ctrl, Shift, Esc), Tab/S-Tab, Enter/S-Enter, macro buttons, and a burger menu button (☰). Communicates with `TermuxActivity` via `ControlPanelListener` interface (`onSendToTerminal`, `onVoiceToggle`, `onSettingsRequested`). Key codes: Enter sends `\r` (submit), S-Enter sends `\n` (newline without submit), TAB sends `\t` (respects SHF state for backtab), S-TAB sends `\033[Z` (backtab).
 
+`CompactToolbar` is a 48dp horizontal bar shown above the soft keyboard (or permanently in fullscreen mode). Main row: ESC, CTL, SHF, TAB, arrows (◀▲▼▶), Enter (↵), STT (🎤), burger menu (☰). Swipe left for macro pages (3 pages of 4 buttons). Same `ControlPanelListener` interface as `GameBoyControlPanel`.
+
 ### Macro System
 
 12 user-configurable macros displayed as 3 pages of 4 buttons in both `GameBoyControlPanel` (page cycle button above vertical stack) and `CompactToolbar` (page indicator button + swipe navigation across pages). Edited via long-press → `MacroEditDialog`. Persistence centralized in `MacroStore` (SharedPreferences "voidterm_macros", JSON array of 12 objects). Migrates automatically from the old 4-macro format by preserving existing macros and appending 8 defaults.
