@@ -49,11 +49,13 @@ public class VoidTermTerminalViewClient implements TerminalViewClient,
     @Override
     public float onScale(float scale) {
         if (scale < 0.9f || scale > 1.1f) {
-            int currentSize = 20;
+            SharedPreferences stylePrefs = activity.getSharedPreferences("voidterm_style", Context.MODE_PRIVATE);
+            int currentSize = stylePrefs.getInt("font_size", 20);
             int newSize = (int) (currentSize * scale);
             newSize = Math.max(6, Math.min(256, newSize));
             if (activity.getTerminalView() != null) {
                 activity.getTerminalView().setTextSize(newSize);
+                stylePrefs.edit().putInt("font_size", newSize).apply();
             }
         }
         return 1.0f;

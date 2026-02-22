@@ -177,17 +177,20 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
             bootstrapInstaller.install(new TermuxBootstrapInstaller.BootstrapCallback() {
                 @Override
                 public void onProgressUpdate(String message, int percent) {
+                    if (isDestroyed()) return;
                     updateInstallProgress(message, percent);
                 }
 
                 @Override
                 public void onInstallComplete() {
+                    if (isDestroyed()) return;
                     hideInstallProgress();
                     onBootstrapReady();
                 }
 
                 @Override
                 public void onInstallFailed(String error) {
+                    if (isDestroyed()) return;
                     showInstallError(error);
                 }
             });
@@ -292,17 +295,20 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
             bootstrapInstaller.repatch(new TermuxBootstrapInstaller.BootstrapCallback() {
                 @Override
                 public void onProgressUpdate(String message, int percent) {
+                    if (isDestroyed()) return;
                     updateInstallProgress(message, percent);
                 }
 
                 @Override
                 public void onInstallComplete() {
+                    if (isDestroyed()) return;
                     hideInstallProgress();
                     startTerminalAndInit();
                 }
 
                 @Override
                 public void onInstallFailed(String error) {
+                    if (isDestroyed()) return;
                     showInstallError(error);
                 }
             });
@@ -388,17 +394,20 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
                 bootstrapInstaller.install(new TermuxBootstrapInstaller.BootstrapCallback() {
                     @Override
                     public void onProgressUpdate(String message, int percent) {
+                        if (isDestroyed()) return;
                         updateInstallProgress(message, percent);
                     }
 
                     @Override
                     public void onInstallComplete() {
+                        if (isDestroyed()) return;
                         hideInstallProgress();
                         onBootstrapReady();
                     }
 
                     @Override
                     public void onInstallFailed(String err) {
+                        if (isDestroyed()) return;
                         showInstallError(err);
                     }
                 });
@@ -798,6 +807,9 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         super.onDestroy();
         if (rootLayout != null && layoutListener != null) {
             rootLayout.getViewTreeObserver().removeOnGlobalLayoutListener(layoutListener);
+        }
+        if (viewClient != null) {
+            viewClient.release();
         }
         if (voiceInputManager != null) {
             voiceInputManager.destroy();

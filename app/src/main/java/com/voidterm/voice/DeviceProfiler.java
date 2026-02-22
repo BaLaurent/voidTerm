@@ -3,6 +3,8 @@ package com.voidterm.voice;
 import android.content.SharedPreferences;
 import android.util.Log;
 
+import com.voidterm.app.SettingsDialog;
+
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
@@ -33,10 +35,10 @@ public class DeviceProfiler {
 
     // Auto-tunable parameter keys
     private static final Set<String> AUTOTUNE_KEYS = new HashSet<>(Arrays.asList(
-            "whisper_beam_search",
-            "whisper_beam_size",
-            "whisper_suppress_non_speech",
-            "whisper_proportional_context"
+            SettingsDialog.KEY_WHISPER_BEAM_SEARCH,
+            SettingsDialog.KEY_WHISPER_BEAM_SIZE,
+            SettingsDialog.KEY_WHISPER_SUPPRESS_NON_SPEECH,
+            SettingsDialog.KEY_WHISPER_PROPORTIONAL_CONTEXT
     ));
 
     // Old hardcoded defaults (before auto-tuning existed) — used for migration
@@ -130,17 +132,17 @@ public class DeviceProfiler {
         editor.putString(KEY_AUTOTUNE_TIER, result.tier.name());
 
         // Apply tier-specific defaults only for non-overridden keys
-        if (!overrides.contains("whisper_beam_search")) {
-            editor.putBoolean("whisper_beam_search", result.tier != Tier.SLOW);
+        if (!overrides.contains(SettingsDialog.KEY_WHISPER_BEAM_SEARCH)) {
+            editor.putBoolean(SettingsDialog.KEY_WHISPER_BEAM_SEARCH, result.tier != Tier.SLOW);
         }
-        if (!overrides.contains("whisper_beam_size")) {
-            editor.putInt("whisper_beam_size", result.tier == Tier.FAST ? 5 : 3);
+        if (!overrides.contains(SettingsDialog.KEY_WHISPER_BEAM_SIZE)) {
+            editor.putInt(SettingsDialog.KEY_WHISPER_BEAM_SIZE, result.tier == Tier.FAST ? 5 : 3);
         }
-        if (!overrides.contains("whisper_proportional_context")) {
-            editor.putBoolean("whisper_proportional_context", true);
+        if (!overrides.contains(SettingsDialog.KEY_WHISPER_PROPORTIONAL_CONTEXT)) {
+            editor.putBoolean(SettingsDialog.KEY_WHISPER_PROPORTIONAL_CONTEXT, true);
         }
-        if (!overrides.contains("whisper_suppress_non_speech")) {
-            editor.putBoolean("whisper_suppress_non_speech", true);
+        if (!overrides.contains(SettingsDialog.KEY_WHISPER_SUPPRESS_NON_SPEECH)) {
+            editor.putBoolean(SettingsDialog.KEY_WHISPER_SUPPRESS_NON_SPEECH, true);
         }
 
         editor.apply();
@@ -158,21 +160,21 @@ public class DeviceProfiler {
 
         Set<String> overrides = new HashSet<>(prefs.getStringSet(KEY_USER_OVERRIDES, new HashSet<>()));
 
-        if (prefs.contains("whisper_beam_search")
-                && prefs.getBoolean("whisper_beam_search", OLD_DEFAULT_BEAM_SEARCH) != OLD_DEFAULT_BEAM_SEARCH) {
-            overrides.add("whisper_beam_search");
+        if (prefs.contains(SettingsDialog.KEY_WHISPER_BEAM_SEARCH)
+                && prefs.getBoolean(SettingsDialog.KEY_WHISPER_BEAM_SEARCH, OLD_DEFAULT_BEAM_SEARCH) != OLD_DEFAULT_BEAM_SEARCH) {
+            overrides.add(SettingsDialog.KEY_WHISPER_BEAM_SEARCH);
         }
-        if (prefs.contains("whisper_beam_size")
-                && prefs.getInt("whisper_beam_size", OLD_DEFAULT_BEAM_SIZE) != OLD_DEFAULT_BEAM_SIZE) {
-            overrides.add("whisper_beam_size");
+        if (prefs.contains(SettingsDialog.KEY_WHISPER_BEAM_SIZE)
+                && prefs.getInt(SettingsDialog.KEY_WHISPER_BEAM_SIZE, OLD_DEFAULT_BEAM_SIZE) != OLD_DEFAULT_BEAM_SIZE) {
+            overrides.add(SettingsDialog.KEY_WHISPER_BEAM_SIZE);
         }
-        if (prefs.contains("whisper_suppress_non_speech")
-                && prefs.getBoolean("whisper_suppress_non_speech", OLD_DEFAULT_SUPPRESS_NON_SPEECH) != OLD_DEFAULT_SUPPRESS_NON_SPEECH) {
-            overrides.add("whisper_suppress_non_speech");
+        if (prefs.contains(SettingsDialog.KEY_WHISPER_SUPPRESS_NON_SPEECH)
+                && prefs.getBoolean(SettingsDialog.KEY_WHISPER_SUPPRESS_NON_SPEECH, OLD_DEFAULT_SUPPRESS_NON_SPEECH) != OLD_DEFAULT_SUPPRESS_NON_SPEECH) {
+            overrides.add(SettingsDialog.KEY_WHISPER_SUPPRESS_NON_SPEECH);
         }
-        if (prefs.contains("whisper_proportional_context")
-                && prefs.getBoolean("whisper_proportional_context", OLD_DEFAULT_PROPORTIONAL_CONTEXT) != OLD_DEFAULT_PROPORTIONAL_CONTEXT) {
-            overrides.add("whisper_proportional_context");
+        if (prefs.contains(SettingsDialog.KEY_WHISPER_PROPORTIONAL_CONTEXT)
+                && prefs.getBoolean(SettingsDialog.KEY_WHISPER_PROPORTIONAL_CONTEXT, OLD_DEFAULT_PROPORTIONAL_CONTEXT) != OLD_DEFAULT_PROPORTIONAL_CONTEXT) {
+            overrides.add(SettingsDialog.KEY_WHISPER_PROPORTIONAL_CONTEXT);
         }
 
         SharedPreferences.Editor editor = prefs.edit();

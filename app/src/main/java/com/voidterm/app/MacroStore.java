@@ -53,15 +53,19 @@ public class MacroStore {
                     }
                     return result;
                 }
-                if (len == 4) {
-                    // Migration from old 4-macro format
+                // Unexpected length — preserve existing macros, fill rest with defaults
+                if (len > 0) {
+                    if (len != 4) {
+                        Log.w(TAG, "Unexpected macro array length: " + len + " (expected " + MACRO_COUNT + "), preserving available entries");
+                    }
                     String[][] result = new String[MACRO_COUNT][2];
-                    for (int i = 0; i < 4; i++) {
+                    int preserve = Math.min(len, MACRO_COUNT);
+                    for (int i = 0; i < preserve; i++) {
                         JSONObject obj = arr.getJSONObject(i);
                         result[i][0] = obj.getString("label");
                         result[i][1] = obj.getString("cmd");
                     }
-                    for (int i = 4; i < MACRO_COUNT; i++) {
+                    for (int i = preserve; i < MACRO_COUNT; i++) {
                         result[i][0] = DEFAULT_MACROS[i][0];
                         result[i][1] = DEFAULT_MACROS[i][1];
                     }

@@ -10,6 +10,7 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
 
+import com.voidterm.app.SettingsDialog;
 import com.voidterm.contracts.TranscriptionListener;
 import com.voidterm.contracts.VoiceInputCallback;
 import com.voidterm.contracts.VoiceState;
@@ -40,16 +41,13 @@ public class VoiceInputManager implements TranscriptionListener {
     private static final String TAG = "VoiceInputManager";
     private static final long VOLUME_POLL_INTERVAL_MS = 100;
     private static final long ERROR_DISMISS_DELAY_MS = 3000;
-    private static final String DEFAULT_MODEL = "ggml-base.bin";
-    private static final String PREFS_NAME = "voidterm_settings";
-    private static final String KEY_MODEL_NAME = "whisper_model_name";
-    private static final String KEY_USE_GPU = "use_gpu";
+    private static final String DEFAULT_MODEL = SettingsDialog.DEFAULT_MODEL;
 
     private final TranscriptionOverlay overlay;
     private final VoiceInputCallback callback;
     private final AudioCapture audioCapture;
     private final Context appContext;
-    private WhisperBridge whisperBridge;
+    private volatile WhisperBridge whisperBridge;
     private final Handler mainHandler;
 
     private final Object stateLock = new Object();
@@ -59,10 +57,11 @@ public class VoiceInputManager implements TranscriptionListener {
     private volatile WhisperConfig cachedConfig;
 
     private static final Set<String> WHISPER_CONFIG_KEYS = new HashSet<>(Arrays.asList(
-            "whisper_language", "whisper_translate", "whisper_initial_prompt",
-            "whisper_temperature", "whisper_beam_search", "whisper_beam_size",
-            "whisper_thread_override", "whisper_suppress_non_speech",
-            "whisper_proportional_context", "whisper_streaming"
+            SettingsDialog.KEY_WHISPER_LANGUAGE, SettingsDialog.KEY_WHISPER_TRANSLATE,
+            SettingsDialog.KEY_WHISPER_INITIAL_PROMPT, SettingsDialog.KEY_WHISPER_TEMPERATURE,
+            SettingsDialog.KEY_WHISPER_BEAM_SEARCH, SettingsDialog.KEY_WHISPER_BEAM_SIZE,
+            SettingsDialog.KEY_WHISPER_THREAD_OVERRIDE, SettingsDialog.KEY_WHISPER_SUPPRESS_NON_SPEECH,
+            SettingsDialog.KEY_WHISPER_PROPORTIONAL_CONTEXT, SettingsDialog.KEY_WHISPER_STREAMING
     ));
 
     private final SharedPreferences.OnSharedPreferenceChangeListener configInvalidator =
@@ -110,12 +109,12 @@ public class VoiceInputManager implements TranscriptionListener {
 
         overlay.setTranscriptionListener(this);
 
-        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        SharedPreferences prefs = context.getSharedPreferences(SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE);
         prefs.registerOnSharedPreferenceChangeListener(configInvalidator);
         cachedConfig = readWhisperConfig(prefs);
 
-        String modelName = prefs.getString(KEY_MODEL_NAME, DEFAULT_MODEL);
-        boolean useGpu = prefs.getBoolean(KEY_USE_GPU, false);
+        String modelName = prefs.getString(SettingsDialog.KEY_MODEL_NAME, DEFAULT_MODEL);
+        boolean useGpu = prefs.getBoolean(SettingsDialog.KEY_USE_GPU, false);
 
         synchronized (stateLock) {
             currentState = VoiceState.LOADING;
@@ -318,8 +317,8 @@ public class VoiceInputManager implements TranscriptionListener {
         whisperBridge.release();
         whisperBridge = new WhisperBridge();
 
-        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-        boolean useGpu = prefs.getBoolean(KEY_USE_GPU, false);
+        SharedPreferences prefs = context.getSharedPreferences(SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE);
+        boolean useGpu = prefs.getBoolean(SettingsDialog.KEY_USE_GPU, false);
 
         synchronized (stateLock) {
             currentState = VoiceState.LOADING;
@@ -333,7 +332,7 @@ public class VoiceInputManager implements TranscriptionListener {
         WhisperConfig config = cachedConfig;
         if (config != null) return config;
 
-        SharedPreferences prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        SharedPreferences prefs = appContext.getSharedPreferences(SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE);
         config = readWhisperConfig(prefs);
         cachedConfig = config;
         return config;
@@ -341,16 +340,16 @@ public class VoiceInputManager implements TranscriptionListener {
 
     private static WhisperConfig readWhisperConfig(SharedPreferences prefs) {
         return new WhisperConfig(
-                prefs.getString("whisper_language", "en"),
-                prefs.getBoolean("whisper_translate", false),
-                prefs.getString("whisper_initial_prompt", ""),
-                prefs.getFloat("whisper_temperature", 0.0f),
-                prefs.getBoolean("whisper_beam_search", false),
-                prefs.getInt("whisper_beam_size", 5),
-                prefs.getInt("whisper_thread_override", 0),
-                prefs.getBoolean("whisper_suppress_non_speech", false),
-                prefs.getBoolean("whisper_proportional_context", false),
-                prefs.getBoolean("whisper_streaming", false)
+                prefs.getString(SettingsDialog.KEY_WHISPER_LANGUAGE, "en"),
+                prefs.getBoolean(SettingsDialog.KEY_WHISPER_TRANSLATE, false),
+                prefs.getString(SettingsDialog.KEY_WHISPER_INITIAL_PROMPT, ""),
+                prefs.getFloat(SettingsDialog.KEY_WHISPER_TEMPERATURE, 0.0f),
+                prefs.getBoolean(SettingsDialog.KEY_WHISPER_BEAM_SEARCH, false),
+                prefs.getInt(SettingsDialog.KEY_WHISPER_BEAM_SIZE, 5),
+                prefs.getInt(SettingsDialog.KEY_WHISPER_THREAD_OVERRIDE, 0),
+                prefs.getBoolean(SettingsDialog.KEY_WHISPER_SUPPRESS_NON_SPEECH, false),
+                prefs.getBoolean(SettingsDialog.KEY_WHISPER_PROPORTIONAL_CONTEXT, false),
+                prefs.getBoolean(SettingsDialog.KEY_WHISPER_STREAMING, false)
         );
     }
 
@@ -360,7 +359,7 @@ public class VoiceInputManager implements TranscriptionListener {
             public void onSuccess(String result) {
                 Log.i(TAG, "Whisper model loaded: " + result);
 
-                SharedPreferences prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                SharedPreferences prefs = appContext.getSharedPreferences(SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE);
                 DeviceProfiler.migrateIfNeeded(prefs);
 
                 if (DeviceProfiler.needsProfiling(prefs, modelName)) {
@@ -420,7 +419,7 @@ public class VoiceInputManager implements TranscriptionListener {
     public void destroy() {
         mainHandler.removeCallbacks(volumePollRunnable);
         mainHandler.removeCallbacks(errorDismissRunnable);
-        appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        appContext.getSharedPreferences(SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE)
                 .unregisterOnSharedPreferenceChangeListener(configInvalidator);
         audioCapture.release();
         whisperBridge.release();

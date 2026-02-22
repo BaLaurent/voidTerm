@@ -20,8 +20,8 @@ export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/25.2.9519653
 ## Clone
 
 ```bash
-git clone --recursive https://github.com/user/voidterm.git
-cd voidterm
+git clone --recursive https://github.com/BaLaurent/voidTerm.git
+cd voidTerm
 ```
 
 The `--recursive` flag is required to pull the whisper.cpp submodule located at `app/src/main/jni/whisper.cpp`.

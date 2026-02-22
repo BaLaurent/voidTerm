@@ -1,6 +1,7 @@
 package com.voidterm.app;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -49,11 +50,25 @@ public class CompactToolbar extends FrameLayout {
     private Runnable activeRepeatRunnable;
     private View activeRepeatView;
 
+    private volatile boolean hapticEnabled;
+    private final SharedPreferences.OnSharedPreferenceChangeListener hapticListener =
+            (prefs, key) -> {
+                if (SettingsDialog.KEY_HAPTIC_FEEDBACK.equals(key)) {
+                    hapticEnabled = prefs.getBoolean(SettingsDialog.KEY_HAPTIC_FEEDBACK, true);
+                }
+            };
+
     public CompactToolbar(Context context) {
         super(context);
         theme = InterfaceTheme.current(context);
         setBackgroundColor(theme.background);
         macros = MacroStore.load(context);
+
+        SharedPreferences prefs = context.getSharedPreferences(
+                SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE);
+        hapticEnabled = prefs.getBoolean(SettingsDialog.KEY_HAPTIC_FEEDBACK, true);
+        prefs.registerOnSharedPreferenceChangeListener(hapticListener);
+
         buildMainRow(context);
         buildMacroRow(context);
     }
@@ -79,7 +94,7 @@ public class CompactToolbar extends FrameLayout {
         // CTL (sticky toggle)
         ctrlButton = makeButton(context, "CTL", theme.modifier);
         ctrlButton.setOnClickListener(v -> {
-            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             ctrlActive = !ctrlActive;
             updateModifierButtonColor(ctrlButton, ctrlActive);
         });
@@ -88,7 +103,7 @@ public class CompactToolbar extends FrameLayout {
         // SHF (sticky toggle)
         shiftButton = makeButton(context, "SHF", theme.modifier);
         shiftButton.setOnClickListener(v -> {
-            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             shiftActive = !shiftActive;
             updateModifierButtonColor(shiftButton, shiftActive);
         });
@@ -174,7 +189,7 @@ public class CompactToolbar extends FrameLayout {
         // Page indicator button
         macroPageButton = makeButton(context, "1/" + MacroStore.PAGE_COUNT, theme.dpad);
         macroPageButton.setOnClickListener(v -> {
-            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             currentMacroPage = (currentMacroPage + 1) % MacroStore.PAGE_COUNT;
             updateMacroPage();
         });
@@ -185,7 +200,7 @@ public class CompactToolbar extends FrameLayout {
             Button btn = makeButton(context, macros[currentMacroPage * MacroStore.PAGE_SIZE + i][0], theme.macro);
             final int index = i;
             btn.setOnClickListener(v -> {
-                if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+                if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
                 if (listener != null) {
                     int actualIndex = currentMacroPage * MacroStore.PAGE_SIZE + index;
                     MacroExecutor.execute(macros[actualIndex][1],
@@ -193,7 +208,7 @@ public class CompactToolbar extends FrameLayout {
                 }
             });
             btn.setOnLongClickListener(v -> {
-                if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+                if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
                 int actualIndex = currentMacroPage * MacroStore.PAGE_SIZE + index;
                 MacroEditDialog.show(context, macros[actualIndex][0], macros[actualIndex][1],
                         (label, cmd) -> {
@@ -303,7 +318,7 @@ public class CompactToolbar extends FrameLayout {
     private void addToolbarButton(LinearLayout row, Context context, String label, int color, OnClickListener click) {
         Button btn = makeButton(context, label, color);
         btn.setOnClickListener(v -> {
-            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             click.onClick(v);
         });
         row.addView(btn, buttonParams());
@@ -377,7 +392,7 @@ public class CompactToolbar extends FrameLayout {
         btn.setOnTouchListener((v, event) -> {
             switch (event.getAction()) {
                 case MotionEvent.ACTION_DOWN:
-                    if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+                    if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
                     if (listener != null) listener.onSendToTerminal(escSeq);
                     v.setPressed(true);
                     cancelRepeat();
@@ -416,6 +431,8 @@ public class CompactToolbar extends FrameLayout {
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
         cancelRepeat();
+        getContext().getSharedPreferences(SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE)
+                .unregisterOnSharedPreferenceChangeListener(hapticListener);
     }
 
     private void updateModifierButtonColor(Button btn, boolean active) {

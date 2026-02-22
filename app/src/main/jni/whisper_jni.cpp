@@ -69,6 +69,13 @@ static void streaming_segment_callback(struct whisper_context *ctx,
         data->env->CallVoidMethod(data->bridgeRef, data->onSegmentMethod, jtext);
         data->env->DeleteLocalRef(jtext);
     }
+
+    // If Java threw during the callback (e.g. OOM in mainHandler.post()),
+    // clear the exception to prevent undefined behavior in subsequent JNI calls
+    if (data->env->ExceptionCheck()) {
+        data->env->ExceptionDescribe();
+        data->env->ExceptionClear();
+    }
 }
 
 extern "C" {

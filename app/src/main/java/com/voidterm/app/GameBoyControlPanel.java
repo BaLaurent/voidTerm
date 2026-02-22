@@ -1,6 +1,7 @@
 package com.voidterm.app;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -52,6 +53,17 @@ public class GameBoyControlPanel extends FrameLayout {
     private final Map<String, View> buttonRegistry = new LinkedHashMap<>();
     private LayoutEditMode editMode;
 
+    private Runnable activeRepeatRunnable;
+    private View activeRepeatView;
+
+    private volatile boolean hapticEnabled;
+    private final SharedPreferences.OnSharedPreferenceChangeListener hapticListener =
+            (prefs, key) -> {
+                if (SettingsDialog.KEY_HAPTIC_FEEDBACK.equals(key)) {
+                    hapticEnabled = prefs.getBoolean(SettingsDialog.KEY_HAPTIC_FEEDBACK, true);
+                }
+            };
+
     public interface ControlPanelListener {
         void onSendToTerminal(String text);
         void onVoiceToggle();
@@ -62,6 +74,12 @@ public class GameBoyControlPanel extends FrameLayout {
         super(context);
         theme = InterfaceTheme.current(context);
         macros = MacroStore.load(context);
+
+        SharedPreferences prefs = context.getSharedPreferences(
+                SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE);
+        hapticEnabled = prefs.getBoolean(SettingsDialog.KEY_HAPTIC_FEEDBACK, true);
+        prefs.registerOnSharedPreferenceChangeListener(hapticListener);
+
         Map<String, float[]> positions = LayoutStore.load(context);
         if (positions != null) {
             buildCustomLayout(context, positions);
@@ -263,7 +281,7 @@ public class GameBoyControlPanel extends FrameLayout {
         btn.setPadding(dp(24), 0, dp(24), 0);
         btn.setMinWidth(dp(80));
         btn.setOnClickListener(v -> {
-            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             if (listener != null) listener.onSettingsRequested();
         });
         buttonRegistry.put("menu", btn);
@@ -275,7 +293,7 @@ public class GameBoyControlPanel extends FrameLayout {
         pageButton.setPadding(dp(8), 0, dp(8), 0);
         pageButton.setMinWidth(dp(36));
         pageButton.setOnClickListener(v -> {
-            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             currentPage = (currentPage + 1) % MacroStore.PAGE_COUNT;
             updateMacroPage();
         });
@@ -289,14 +307,14 @@ public class GameBoyControlPanel extends FrameLayout {
         btn.setPadding(dp(12), 0, dp(12), 0);
         btn.setMinWidth(dp(40));
         btn.setOnClickListener(v -> {
-            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             if (listener != null) {
                 int ai = currentPage * MacroStore.PAGE_SIZE + index;
                 MacroExecutor.execute(macros[ai][1], listener::onSendToTerminal, v.getHandler());
             }
         });
         btn.setOnLongClickListener(v -> {
-            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+            if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
             int ai = currentPage * MacroStore.PAGE_SIZE + index;
             MacroEditDialog.show(ctx, macros[ai][0], macros[ai][1],
                     (label, cmd) -> {
@@ -316,7 +334,7 @@ public class GameBoyControlPanel extends FrameLayout {
     private Button createEscButton(Context ctx) {
         Button btn = makeButton(ctx, dp(40), "ESC", 9f, theme.modifier, false);
         btn.setOnClickListener(v -> {
-            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             if (listener != null) listener.onSendToTerminal("\033");
         });
         buttonRegistry.put("esc", btn);
@@ -326,7 +344,7 @@ public class GameBoyControlPanel extends FrameLayout {
     private Button createCtrlButton(Context ctx) {
         ctrlButton = makeButton(ctx, dp(40), "CTL", 9f, theme.modifier, false);
         ctrlButton.setOnClickListener(v -> {
-            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             ctrlActive = !ctrlActive;
             updateButtonColor(ctrlButton, ctrlActive);
         });
@@ -337,7 +355,7 @@ public class GameBoyControlPanel extends FrameLayout {
     private Button createShiftButton(Context ctx) {
         shiftButton = makeButton(ctx, dp(40), "SHF", 9f, theme.modifier, false);
         shiftButton.setOnClickListener(v -> {
-            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             shiftActive = !shiftActive;
             updateButtonColor(shiftButton, shiftActive);
         });
@@ -348,7 +366,7 @@ public class GameBoyControlPanel extends FrameLayout {
     private Button createSttButton(Context ctx) {
         Button btn = makeButton(ctx, dp(52), "\uD83C\uDFA4", 18f, theme.dpad, false);
         btn.setOnClickListener(v -> {
-            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             if (listener != null) listener.onVoiceToggle();
         });
         buttonRegistry.put("stt", btn);
@@ -365,7 +383,7 @@ public class GameBoyControlPanel extends FrameLayout {
     private Button createSTabButton(Context ctx) {
         Button btn = makeButton(ctx, dp(40), "S-TAB", 8f, theme.modifier, false);
         btn.setOnClickListener(v -> {
-            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             if (listener != null) listener.onSendToTerminal("\033[Z");
         });
         buttonRegistry.put("s_tab", btn);
@@ -375,7 +393,7 @@ public class GameBoyControlPanel extends FrameLayout {
     private Button createTabButton(Context ctx) {
         Button btn = makeButton(ctx, dp(48), "TAB", 10f, theme.primary, false);
         btn.setOnClickListener(v -> {
-            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             if (listener != null) {
                 if (shiftActive) {
                     listener.onSendToTerminal("\033[Z");
@@ -392,7 +410,7 @@ public class GameBoyControlPanel extends FrameLayout {
     private Button createEnterButton(Context ctx) {
         Button btn = makeButton(ctx, dp(52), "\u21B5", 18f, theme.primary, false);
         btn.setOnClickListener(v -> {
-            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             if (listener != null) listener.onSendToTerminal("\r");
         });
         buttonRegistry.put("enter", btn);
@@ -402,7 +420,7 @@ public class GameBoyControlPanel extends FrameLayout {
     private Button createSEnterButton(Context ctx) {
         Button btn = makeButton(ctx, dp(40), "S-\u21B5", 8f, theme.modifier, false);
         btn.setOnClickListener(v -> {
-            if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             if (listener != null) listener.onSendToTerminal("\n");
         });
         buttonRegistry.put("s_enter", btn);
@@ -529,11 +547,11 @@ public class GameBoyControlPanel extends FrameLayout {
         btn.setOnTouchListener((v, event) -> {
             switch (event.getAction()) {
                 case MotionEvent.ACTION_DOWN:
-                    if (SettingsDialog.isHapticEnabled(getContext())) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+                    if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
                     if (listener != null) listener.onSendToTerminal(escSeq);
                     v.setPressed(true);
-                    // Start repeating
-                    v.postDelayed(new Runnable() {
+                    cancelRepeat();
+                    Runnable repeat = new Runnable() {
                         @Override
                         public void run() {
                             if (v.isPressed()) {
@@ -541,15 +559,35 @@ public class GameBoyControlPanel extends FrameLayout {
                                 v.postDelayed(this, 100);
                             }
                         }
-                    }, 400);
+                    };
+                    activeRepeatRunnable = repeat;
+                    activeRepeatView = v;
+                    v.postDelayed(repeat, 400);
                     return true;
                 case MotionEvent.ACTION_UP:
                 case MotionEvent.ACTION_CANCEL:
                     v.setPressed(false);
+                    cancelRepeat();
                     return true;
             }
             return false;
         });
+    }
+
+    private void cancelRepeat() {
+        if (activeRepeatRunnable != null && activeRepeatView != null) {
+            activeRepeatView.removeCallbacks(activeRepeatRunnable);
+        }
+        activeRepeatRunnable = null;
+        activeRepeatView = null;
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        super.onDetachedFromWindow();
+        cancelRepeat();
+        getContext().getSharedPreferences(SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE)
+                .unregisterOnSharedPreferenceChangeListener(hapticListener);
     }
 
     private View buildModifierZone(Context context) {

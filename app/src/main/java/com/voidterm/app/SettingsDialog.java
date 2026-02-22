@@ -25,29 +25,30 @@ import com.voidterm.voice.DeviceProfiler;
  */
 public class SettingsDialog {
 
-    static final String PREFS_NAME = "voidterm_settings";
-    static final String KEY_MODEL_NAME = "whisper_model_name";
-    static final String KEY_COMPACT_TOOLBAR = "compact_toolbar_enabled";
-    static final String KEY_TAP_TOGGLE_KEYBOARD = "tap_toggle_keyboard";
-    static final String KEY_HAPTIC_FEEDBACK = "haptic_feedback";
-    static final String KEY_FULLSCREEN_MODE = "fullscreen_mode";
-    static final String KEY_USE_GPU = "use_gpu";
-    static final String KEY_BACK_BEHAVIOR = "back_key_behavior";
-    static final String KEY_BACK_MACRO = "back_key_macro";
-    static final String KEY_WHISPER_LANGUAGE = "whisper_language";
-    static final String KEY_WHISPER_TRANSLATE = "whisper_translate";
-    static final String KEY_WHISPER_INITIAL_PROMPT = "whisper_initial_prompt";
-    static final String KEY_WHISPER_TEMPERATURE = "whisper_temperature";
-    static final String KEY_WHISPER_BEAM_SEARCH = "whisper_beam_search";
-    static final String KEY_WHISPER_BEAM_SIZE = "whisper_beam_size";
-    static final String KEY_WHISPER_THREAD_OVERRIDE = "whisper_thread_override";
-    static final String KEY_WHISPER_SUPPRESS_NON_SPEECH = "whisper_suppress_non_speech";
-    static final String KEY_WHISPER_PROPORTIONAL_CONTEXT = "whisper_proportional_context";
-    static final String KEY_WHISPER_STREAMING = "whisper_streaming";
-    static final String BACK_ESCAPE = "escape";
-    static final String BACK_TOGGLE_KEYBOARD = "toggle_keyboard";
-    static final String BACK_MACRO = "macro";
-    static final String DEFAULT_MODEL = "ggml-base.bin";
+    public static final String PREFS_NAME = "voidterm_settings";
+    public static final String KEY_MODEL_NAME = "whisper_model_name";
+    public static final String KEY_COMPACT_TOOLBAR = "compact_toolbar_enabled";
+    public static final String KEY_TAP_TOGGLE_KEYBOARD = "tap_toggle_keyboard";
+    public static final String KEY_HAPTIC_FEEDBACK = "haptic_feedback";
+    public static final String KEY_FULLSCREEN_MODE = "fullscreen_mode";
+    public static final String KEY_USE_GPU = "use_gpu";
+    public static final String KEY_BACK_BEHAVIOR = "back_key_behavior";
+    public static final String KEY_BACK_MACRO = "back_key_macro";
+    public static final String KEY_WHISPER_LANGUAGE = "whisper_language";
+    public static final String KEY_WHISPER_TRANSLATE = "whisper_translate";
+    public static final String KEY_WHISPER_INITIAL_PROMPT = "whisper_initial_prompt";
+    public static final String KEY_WHISPER_TEMPERATURE = "whisper_temperature";
+    public static final String KEY_WHISPER_BEAM_SEARCH = "whisper_beam_search";
+    public static final String KEY_WHISPER_BEAM_SIZE = "whisper_beam_size";
+    public static final String KEY_WHISPER_THREAD_OVERRIDE = "whisper_thread_override";
+    public static final String KEY_WHISPER_SUPPRESS_NON_SPEECH = "whisper_suppress_non_speech";
+    public static final String KEY_WHISPER_PROPORTIONAL_CONTEXT = "whisper_proportional_context";
+    public static final String KEY_WHISPER_STREAMING = "whisper_streaming";
+    public static final String KEY_THEME = "interface_theme";
+    public static final String BACK_ESCAPE = "escape";
+    public static final String BACK_TOGGLE_KEYBOARD = "toggle_keyboard";
+    public static final String BACK_MACRO = "macro";
+    public static final String DEFAULT_MODEL = "ggml-base.bin";
     static final int REQUEST_MODEL_FILE = 1001;
 
     private static final String[] LANGUAGE_LABELS = {
@@ -89,6 +90,10 @@ public class SettingsDialog {
     public void show() {
         SharedPreferences prefs = activity.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         String currentModel = prefs.getString(KEY_MODEL_NAME, DEFAULT_MODEL);
+        // Guard against spinner listeners firing during programmatic setSelection().
+        // Android posts a SelectionNotifier that fires the listener asynchronously.
+        // The flag is cleared via post() after dialog.show() so it runs after queued notifiers.
+        final boolean[] initializing = {true};
 
         LinearLayout layout = new LinearLayout(activity);
         layout.setOrientation(LinearLayout.VERTICAL);
@@ -195,6 +200,18 @@ public class SettingsDialog {
                 prefs.edit().putBoolean(KEY_WHISPER_STREAMING, checked).apply());
         layout.addView(streamingToggle);
 
+        TextView streamingWarning = new TextView(activity);
+        streamingWarning.setText("\u26A0 Streaming sends text directly to the terminal without review. You cannot edit or cancel before submission.");
+        streamingWarning.setTextSize(12);
+        streamingWarning.setTextColor(0xFFFF9800);
+        streamingWarning.setPadding(0, 0, 0, 8);
+        streamingWarning.setVisibility(prefs.getBoolean(KEY_WHISPER_STREAMING, false) ? View.VISIBLE : View.GONE);
+        layout.addView(streamingWarning);
+        streamingToggle.setOnCheckedChangeListener((btn, checked) -> {
+                prefs.edit().putBoolean(KEY_WHISPER_STREAMING, checked).apply();
+                streamingWarning.setVisibility(checked ? View.VISIBLE : View.GONE);
+        });
+
         // Advanced section (collapsed by default)
         LinearLayout advancedContainer = new LinearLayout(activity);
         advancedContainer.setOrientation(LinearLayout.VERTICAL);
@@ -259,7 +276,9 @@ public class SettingsDialog {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int pos, long id) {
                 prefs.edit().putInt(KEY_WHISPER_BEAM_SIZE, pos + 2).apply();
-                DeviceProfiler.markUserOverride(prefs, KEY_WHISPER_BEAM_SIZE);
+                if (!initializing[0]) {
+                    DeviceProfiler.markUserOverride(prefs, KEY_WHISPER_BEAM_SIZE);
+                }
             }
             @Override
             public void onNothingSelected(AdapterView<?> parent) {}
@@ -456,15 +475,18 @@ public class SettingsDialog {
         AlertDialog dialog = new AlertDialog.Builder(activity)
                 .setTitle("VoidTerm Settings")
                 .setView(scrollView)
-                .setPositiveButton("Close", (d, w) -> {
-                    String macroText = macroField.getText().toString();
-                    String promptText = promptField.getText().toString();
-                    prefs.edit()
-                            .putString(KEY_BACK_MACRO, macroText)
-                            .putString(KEY_WHISPER_INITIAL_PROMPT, promptText)
-                            .apply();
-                })
+                .setPositiveButton("Close", null)
                 .create();
+
+        // Save text fields on ANY dismissal (Close button, system back, browse, etc.)
+        dialog.setOnDismissListener(d -> {
+            String macroText = macroField.getText().toString();
+            String promptText = promptField.getText().toString();
+            prefs.edit()
+                    .putString(KEY_BACK_MACRO, macroText)
+                    .putString(KEY_WHISPER_INITIAL_PROMPT, promptText)
+                    .apply();
+        });
 
         browseBtn.setOnClickListener(v -> {
             Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
@@ -486,5 +508,7 @@ public class SettingsDialog {
         });
 
         dialog.show();
+        // Clear initializing flag after queued SelectionNotifier runnables
+        layout.post(() -> initializing[0] = false);
     }
 }

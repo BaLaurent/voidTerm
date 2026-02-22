@@ -212,6 +212,15 @@ public class WhisperBridge {
                 bufLog("nativeInit OK in " + loadTime + "ms");
 
                 synchronized (contextLock) {
+                    // Re-check under lock to prevent TOCTOU: a transcribe() call
+                    // could have started between the outer isTranscribing check and here
+                    if (isTranscribing.get()) {
+                        nativeFree(handle);
+                        isLoading.set(false);
+                        bufErr("Transcription started during model load — aborting load");
+                        mainHandler.post(() -> callback.onError("Cannot load model during transcription"));
+                        return;
+                    }
                     if (contextHandle != 0) {
                         nativeFree(contextHandle);
                     }
@@ -387,6 +396,9 @@ public class WhisperBridge {
             return -1;
         }
 
+        // Assign transcribeThread so release() can join this thread if called
+        // during the benchmark (prevents use-after-free on nativeFree)
+        transcribeThread = Thread.currentThread();
         try {
             long start = System.currentTimeMillis();
             nativeTranscribe(handle, audio, "en", threadCount,
@@ -397,6 +409,7 @@ public class WhisperBridge {
             Log.e(TAG, "Benchmark transcription failed", e);
             return -1;
         } finally {
+            transcribeThread = null;
             isTranscribing.set(false);
         }
     }

@@ -51,8 +51,6 @@ public enum InterfaceTheme {
         0xFF00FF41
     );
 
-    private static final String KEY_THEME = "interface_theme";
-
     public final String label;
     public final int background;
     public final int dpad;
@@ -77,7 +75,7 @@ public enum InterfaceTheme {
     public static InterfaceTheme current(Context context) {
         SharedPreferences prefs = context.getSharedPreferences(
                 SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE);
-        String name = prefs.getString(KEY_THEME, GAMEBOY.name());
+        String name = prefs.getString(SettingsDialog.KEY_THEME, GAMEBOY.name());
         try {
             return valueOf(name);
         } catch (IllegalArgumentException e) {
@@ -87,7 +85,7 @@ public enum InterfaceTheme {
 
     public static void save(Context context, InterfaceTheme theme) {
         context.getSharedPreferences(SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE)
-                .edit().putString(KEY_THEME, theme.name()).apply();
+                .edit().putString(SettingsDialog.KEY_THEME, theme.name()).apply();
     }
 
     public static int darkenColor(int color, float factor) {
