@@ -6,13 +6,10 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.graphics.Typeface;
-import android.net.Uri;
 import android.os.Bundle;
-import android.provider.OpenableColumns;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.ContextMenu;
@@ -35,7 +32,6 @@ import androidx.drawerlayout.widget.DrawerLayout;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
-import java.io.InputStream;
 
 import com.termux.terminal.TerminalSession;
 import com.termux.view.TerminalView;
@@ -71,6 +67,7 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
     private final Rect visibleDisplayRect = new Rect();
 
     private DrawerLayout drawerLayout;
+    private LinearLayout drawerPanel;
     private SessionListAdapter sessionListAdapter;
 
     private TermuxBootstrapInstaller bootstrapInstaller;
@@ -181,7 +178,7 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
         // Build drawer panel
-        LinearLayout drawerPanel = buildDrawerPanel();
+        drawerPanel = buildDrawerPanel();
         DrawerLayout.LayoutParams drawerLp = new DrawerLayout.LayoutParams(
                 dp(280), ViewGroup.LayoutParams.MATCH_PARENT);
         drawerLp.gravity = Gravity.START;
@@ -612,56 +609,19 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         }
     }
 
+    private static final int REQUEST_SETTINGS = 1002;
+
     @Override
     public void onSettingsRequested() {
-        new SettingsDialog(this, this::reloadCurrentModel,
-                () -> panelController.getControlPanel().enterEditMode(),
-                this::applyTheme, this::updatePanelVisibility).show();
+        startActivityForResult(new Intent(this, SettingsActivity.class), REQUEST_SETTINGS);
     }
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == SettingsDialog.REQUEST_MODEL_FILE && resultCode == RESULT_OK && data != null) {
-            Uri uri = data.getData();
-            if (uri != null) {
-                onModelFileSelected(uri);
-            }
-        }
-    }
-
-    private void onModelFileSelected(Uri uri) {
-        String filename = getFileNameFromUri(uri);
-        if (filename == null) {
-            Log.e(TAG, "Could not resolve filename from URI");
-            return;
-        }
-
-        File modelsDir = new File(getFilesDir(), "models");
-        if (!modelsDir.exists()) {
-            modelsDir.mkdirs();
-        }
-        File destFile = new File(modelsDir, filename);
-
-        try (InputStream in = getContentResolver().openInputStream(uri);
-             FileOutputStream out = new FileOutputStream(destFile)) {
-            byte[] buf = new byte[8192];
-            int len;
-            while ((len = in.read(buf)) > 0) {
-                out.write(buf, 0, len);
-            }
-            out.flush();
-            Log.i(TAG, "Model file copied: " + destFile.getAbsolutePath());
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to copy model file", e);
-            return;
-        }
-
-        SharedPreferences prefs = getSharedPreferences(SettingsDialog.PREFS_NAME, MODE_PRIVATE);
-        prefs.edit().putString(SettingsDialog.KEY_MODEL_NAME, filename).apply();
-
-        if (voiceInputManager != null) {
-            voiceInputManager.reloadModel(this, filename);
+        if (requestCode == REQUEST_SETTINGS
+                && resultCode == SettingsActivity.RESULT_CUSTOMIZE_LAYOUT) {
+            panelController.getControlPanel().enterEditMode();
         }
     }
 
@@ -671,19 +631,6 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
             String modelName = prefs.getString(SettingsDialog.KEY_MODEL_NAME, SettingsDialog.DEFAULT_MODEL);
             voiceInputManager.reloadModel(this, modelName);
         }
-    }
-
-    private String getFileNameFromUri(Uri uri) {
-        String name = null;
-        try (Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
-            if (cursor != null && cursor.moveToFirst()) {
-                int index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
-                if (index >= 0) {
-                    name = cursor.getString(index);
-                }
-            }
-        }
-        return name;
     }
 
     /**
@@ -740,7 +687,27 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
      */
     public void applyTheme() {
         panelController.applyTheme(this);
+        rebuildDrawerPanel();
         updatePanelVisibility();
+    }
+
+    /**
+     * Rebuild the drawer panel with current theme colors.
+     * Preserves session list data and drawer layout params.
+     */
+    private void rebuildDrawerPanel() {
+        if (drawerLayout == null || drawerPanel == null) return;
+        DrawerLayout.LayoutParams lp =
+                (DrawerLayout.LayoutParams) drawerPanel.getLayoutParams();
+        drawerLayout.removeView(drawerPanel);
+        drawerPanel = buildDrawerPanel();
+        drawerLayout.addView(drawerPanel, lp);
+        // Refresh session list with current data
+        if (sessionManager != null) {
+            sessionListAdapter.update(
+                    sessionManager.getSessions(),
+                    sessionManager.getCurrentIndex());
+        }
     }
 
     private void onKeyboardVisibilityChanged(boolean visible) {
@@ -856,14 +823,19 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
      * Programmatic layout (no XML), consistent with VoidTerm's style.
      */
     private LinearLayout buildDrawerPanel() {
+        InterfaceTheme theme = InterfaceTheme.current(this);
+        int bgColor = theme.drawerBg;
+        int accentColor = theme.drawerAccent;
+        int dividerColor = InterfaceTheme.lightenColor(bgColor, 1.4f);
+
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setBackgroundColor(0xFF1A1A1A);
+        panel.setBackgroundColor(bgColor);
 
         // Header
         TextView header = new TextView(this);
         header.setText("Sessions");
-        header.setTextColor(0xFF44CC44);
+        header.setTextColor(accentColor);
         header.setTextSize(16);
         header.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
         header.setPadding(dp(16), dp(16), dp(16), dp(12));
@@ -871,13 +843,13 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
 
         // Divider
         View divider = new View(this);
-        divider.setBackgroundColor(0xFF333333);
+        divider.setBackgroundColor(dividerColor);
         panel.addView(divider, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
 
         // Session list
         ListView listView = new ListView(this);
-        listView.setBackgroundColor(0xFF1A1A1A);
+        listView.setBackgroundColor(bgColor);
         listView.setDivider(null);
         listView.setDividerHeight(0);
 
@@ -911,14 +883,14 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
 
         // Bottom divider
         View bottomDivider = new View(this);
-        bottomDivider.setBackgroundColor(0xFF333333);
+        bottomDivider.setBackgroundColor(dividerColor);
         panel.addView(bottomDivider, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
 
         // "+ New Session" button
         TextView newBtn = new TextView(this);
         newBtn.setText("+ New Session");
-        newBtn.setTextColor(0xFF44CC44);
+        newBtn.setTextColor(accentColor);
         newBtn.setTextSize(14);
         newBtn.setTypeface(Typeface.MONOSPACE);
         newBtn.setPadding(dp(16), dp(12), dp(16), dp(12));
@@ -989,6 +961,14 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
     @Override
     protected void onResume() {
         super.onResume();
+        // Sync settings that may have changed in SettingsActivity
+        SharedPreferences prefs = getSharedPreferences(SettingsDialog.PREFS_NAME, MODE_PRIVATE);
+        if (prefs.getBoolean(SettingsDialog.KEY_MODEL_RELOAD_REQUESTED, false)) {
+            prefs.edit().putBoolean(SettingsDialog.KEY_MODEL_RELOAD_REQUESTED, false).apply();
+            reloadCurrentModel();
+        }
+        applyTheme();
+        updatePanelVisibility();
     }
 
     @Override

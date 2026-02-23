@@ -18,6 +18,7 @@ import java.util.List;
 /**
  * Adapter for the session list in the left drawer.
  * Programmatic layout (no XML) — consistent with the rest of VoidTerm.
+ * Theme-aware: uses InterfaceTheme colors for active/inactive indicators.
  */
 public class SessionListAdapter extends BaseAdapter {
 
@@ -31,17 +32,25 @@ public class SessionListAdapter extends BaseAdapter {
     private List<TerminalSession> sessions;
     private int activeIndex;
     private SessionListCallback callback;
+    private InterfaceTheme theme;
 
     public SessionListAdapter(Context context, SessionListCallback callback) {
         this.context = context;
         this.callback = callback;
         this.sessions = java.util.Collections.emptyList();
         this.activeIndex = -1;
+        this.theme = InterfaceTheme.current(context);
     }
 
     public void update(List<TerminalSession> sessions, int activeIndex) {
         this.sessions = sessions;
         this.activeIndex = activeIndex;
+        notifyDataSetChanged();
+    }
+
+    /** Update theme and refresh all rows. */
+    public void updateTheme(InterfaceTheme theme) {
+        this.theme = theme;
         notifyDataSetChanged();
     }
 
@@ -97,7 +106,7 @@ public class SessionListAdapter extends BaseAdapter {
             closeBtn.setText("\u2715"); // ✕
             closeBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
             closeBtn.setTypeface(Typeface.MONOSPACE);
-            closeBtn.setTextColor(0xFFAAAAAA);
+            closeBtn.setTextColor(InterfaceTheme.darkenColor(theme.drawerAccent, 0.5f));
             closeBtn.setPadding(dp(8), dp(4), dp(8), dp(4));
             row.addView(closeBtn, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -108,7 +117,7 @@ public class SessionListAdapter extends BaseAdapter {
         TerminalSession session = sessions.get(position);
 
         indicator.setText("\u25CF"); // ●
-        indicator.setTextColor(isActive ? 0xFF44CC44 : 0xFF666666);
+        indicator.setTextColor(isActive ? theme.drawerAccent : InterfaceTheme.darkenColor(theme.drawerAccent, 0.4f));
 
         String sessionName = session.mSessionName;
         if (sessionName == null || sessionName.isEmpty()) {

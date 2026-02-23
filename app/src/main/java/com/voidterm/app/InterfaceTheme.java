@@ -5,8 +5,8 @@ import android.content.SharedPreferences;
 import android.graphics.Color;
 
 /**
- * Interface color themes for GameBoyControlPanel and CompactToolbar.
- * Each theme defines 7 colors used across both controls.
+ * Interface color themes for GameBoyControlPanel, CompactToolbar, and session drawer.
+ * Each theme defines 7 panel colors + 2 drawer colors.
  */
 public enum InterfaceTheme {
 
@@ -18,7 +18,9 @@ public enum InterfaceTheme {
         0xFF9B2257, // primary
         0xFF3C3C6E, // modifier
         0xFF585858, // macro
-        0xFF9BBC0F  // active
+        0xFF9BBC0F, // active
+        0xFF33312A, // drawerBg — warm dark gray, echoes cream body
+        0xFF9BBC0F  // drawerAccent — lime green, classic GameBoy screen
     ),
     DARK_GAMEBOY(
         "Dark GameBoy",
@@ -28,7 +30,9 @@ public enum InterfaceTheme {
         0xFF6B1840,
         0xFF2A2A55,
         0xFF404040,
-        0xFF6B8A0A
+        0xFF6B8A0A,
+        0xFF2A2A55, // drawerBg — dark indigo, matches modifier
+        0xFF9BBC0F  // drawerAccent — bright lime (not the muted olive)
     ),
     ATOMIC_PURPLE(
         "Atomic Purple",
@@ -38,7 +42,9 @@ public enum InterfaceTheme {
         0xFF7B3FA0, // primary — rich violet
         0xFF3A2D5C, // modifier — dark indigo
         0xFF504060, // macro — muted purple-gray
-        0xFFBB66FF  // active — vivid purple glow
+        0xFFBB66FF, // active — vivid purple glow
+        0xFF1E1A28, // drawerBg — deep purple cavity
+        0xFFBB66FF  // drawerAccent — vivid purple glow
     ),
     HACKERBOY(
         "HackerBoy",
@@ -48,7 +54,9 @@ public enum InterfaceTheme {
         0xFF00CC66,
         0xFF006633,
         0xFF1A331A,
-        0xFF00FF41
+        0xFF00FF41,
+        0xFF0D0D0D, // drawerBg — near-black
+        0xFF00FF41  // drawerAccent — matrix green
     );
 
     public final String label;
@@ -59,9 +67,12 @@ public enum InterfaceTheme {
     public final int modifier;
     public final int macro;
     public final int active;
+    public final int drawerBg;
+    public final int drawerAccent;
 
     InterfaceTheme(String label, int background, int dpad, int cross,
-                   int primary, int modifier, int macro, int active) {
+                   int primary, int modifier, int macro, int active,
+                   int drawerBg, int drawerAccent) {
         this.label = label;
         this.background = background;
         this.dpad = dpad;
@@ -70,6 +81,8 @@ public enum InterfaceTheme {
         this.modifier = modifier;
         this.macro = macro;
         this.active = active;
+        this.drawerBg = drawerBg;
+        this.drawerAccent = drawerAccent;
     }
 
     public static InterfaceTheme current(Context context) {
