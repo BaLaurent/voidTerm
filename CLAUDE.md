@@ -44,7 +44,7 @@ Four Gradle modules: `:app` (main), `:terminal-emulator`, `:terminal-view`, `:te
 ```
 Quest Controller (A/X) → QuestInputHandler → VoiceInputManager (state machine)
 Quest Microphone → AudioCapture (PCM float32 16kHz, VOICE_RECOGNITION source)
-  → [optional] AudioPreprocessor (DC removal → HP 80Hz → pre-emphasis 0.97 → peak norm)
+  → [optional] AudioPreprocessor (DC removal → HP → pre-emphasis → peak norm → gain)
   → WhisperBridge (JNI) → TranscriptionOverlay
 User confirms (Enter) → VoiceInputCallback.onVoiceTextReady() → Terminal PTY
 ```
@@ -56,7 +56,7 @@ User confirms (Enter) → VoiceInputCallback.onVoiceTextReady() → Terminal PTY
 | Package | Role |
 |---|---|
 | `com.voidterm.contracts` | Shared interfaces: `VoiceState`, `VoiceInputCallback`, `TranscriptionListener`, `ControlPanel`, `ControlPanelListener` |
-| `com.voidterm.voice` | Voice system: `VoiceInputManager`, `AudioCapture`, `AudioPreprocessor`, `WhisperBridge`, `TranscriptionOverlay` |
+| `com.voidterm.voice` | Voice system: `VoiceInputManager`, `AudioCapture`, `AudioPreprocessor`, `AudioConfig`, `WhisperBridge`, `TranscriptionOverlay` |
 | `com.voidterm.input` | Controller mapping: `QuestInputHandler` |
 | `com.voidterm.app` | Activity, UI, styling: `TermuxActivity`, `SessionManager`, `SessionListAdapter`, `GameBoyControlPanel`, `CompactToolbar`, `MacroExecutor`, `MacroEditDialog`, `TerminalStyleDialog`, `SettingsDialog`, `ExtraKeysConfig` |
 
@@ -140,6 +140,23 @@ Configurable whisper.cpp transcription parameters in `SettingsDialog` "Transcrip
 | `whisper_streaming` | boolean | `false` | Show text progressively during transcription |
 
 Data flow: `SharedPreferences → WhisperConfig → WhisperBridge.transcribe() → nativeTranscribe() JNI → whisper_full_params`. The JNI layer receives flattened primitives (not the config object) to avoid `GetFieldID` boilerplate. Advanced settings (temperature, beam search, threads, suppress) are hidden behind a collapsible "Advanced..." button in the UI. Streaming toggle is visible in the main Transcription section (not behind Advanced).
+
+### Audio Preprocessing (AudioConfig)
+
+`AudioConfig` (immutable data class in `com.voidterm.voice`) holds configurable preprocessing parameters. `AudioConfig.DEFAULT` is the single source of truth for all default values — `SharedPreferences` fallbacks in `VoiceInputManager` and `AudioDebugDialog` reference `AudioConfig.DEFAULT` fields.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `audio_gain` | float | `1.0f` | Output gain (applied AFTER normalization as volume control) |
+| `audio_pre_emphasis` | float | `0.97f` | Pre-emphasis coefficient (0=off, 0.97=standard speech) |
+| `audio_hp_cutoff` | int | `80` | High-pass filter cutoff in Hz |
+| `audio_norm_target` | float | `0.9f` | Peak normalization target level |
+
+Pipeline order: DC removal → HP filter → pre-emphasis → peak normalization → output gain. Gain is intentionally placed AFTER normalization — applying it before would cause clipping distortion without benefit (normalization undoes non-clipping gain). The `hpAlpha()` method on `AudioConfig` computes the IIR filter coefficient from the cutoff frequency.
+
+`AudioDebugDialog` provides real-time A/B testing: record a test clip, adjust parameters via spinners, hear the difference. Spinners persist changes to `SharedPreferences` immediately. `AudioPreprocessor.processWithDiagnostics()` returns per-stage stats for the debug display.
+
+Data flow: `SharedPreferences → AudioConfig → AudioPreprocessor.process() → whisper.cpp input`. Cached in `VoiceInputManager.cachedAudioConfig` (volatile, invalidated by `OnSharedPreferenceChangeListener`).
 
 ### Streaming Transcription
 
