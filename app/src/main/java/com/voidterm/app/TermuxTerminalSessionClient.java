@@ -64,6 +64,7 @@ public class TermuxTerminalSessionClient implements TerminalSessionClient {
 
     @Override
     public void onTextChanged(@NonNull TerminalSession changedSession) {
+        if (changedSession != currentSession) return;
         activity.runOnUiThread(() -> {
             if (activity.getTerminalView() != null) {
                 activity.getTerminalView().onScreenUpdated();
@@ -78,10 +79,11 @@ public class TermuxTerminalSessionClient implements TerminalSessionClient {
 
     @Override
     public void onSessionFinished(@NonNull TerminalSession finishedSession) {
-        Log.w(TAG, "Terminal session finished");
+        Log.w(TAG, "Terminal session finished: " + finishedSession.mSessionName);
         if (diagnosticLog != null) {
-            diagnosticLog.warn(TAG, "Terminal session finished");
+            diagnosticLog.warn(TAG, "Terminal session finished: " + finishedSession.mSessionName);
         }
+        activity.onSessionFinished(finishedSession);
     }
 
     @Override
@@ -103,7 +105,8 @@ public class TermuxTerminalSessionClient implements TerminalSessionClient {
     }
 
     @Override
-    public void onColorsChanged(@NonNull TerminalSession session) {
+    public void onColorsChanged(@NonNull TerminalSession changedSession) {
+        if (changedSession != currentSession) return;
         activity.runOnUiThread(() -> {
             if (activity.getTerminalView() != null) {
                 activity.getTerminalView().onScreenUpdated();

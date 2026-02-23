@@ -20,6 +20,9 @@ VoidTerm is a Termux fork with integrated local voice input via whisper.cpp, tar
 
 # Install on connected Quest via ADB
 adb install app/build/outputs/apk/debug/app-debug.apk
+
+# Run unit tests
+./gradlew testDebugUnitTest
 ```
 
 **Prerequisites:** JDK 17, Android SDK API 34, NDK r25+ (25.2.9519653), CMake 3.22.1+
@@ -30,7 +33,7 @@ adb install app/build/outputs/apk/debug/app-debug.apk
 
 **Submodule:** whisper.cpp must be initialized: `git submodule update --init --recursive`
 
-No automated test suite. Testing is manual on Quest devices.
+Unit tests: `./gradlew testDebugUnitTest` (JUnit 4 + Mockito + Robolectric). Integration testing is manual on Quest devices.
 
 ## Architecture
 
@@ -53,7 +56,7 @@ User confirms (Enter) → VoiceInputCallback.onVoiceTextReady() → Terminal PTY
 | `com.voidterm.contracts` | Shared interfaces: `VoiceState`, `VoiceInputCallback`, `TranscriptionListener`, `ControlPanel`, `ControlPanelListener` |
 | `com.voidterm.voice` | Voice system: `VoiceInputManager`, `AudioCapture`, `WhisperBridge`, `TranscriptionOverlay` |
 | `com.voidterm.input` | Controller mapping: `QuestInputHandler` |
-| `com.voidterm.app` | Activity, UI, styling: `TermuxActivity`, `GameBoyControlPanel`, `CompactToolbar`, `MacroExecutor`, `MacroEditDialog`, `TerminalStyleDialog`, `SettingsDialog`, `ExtraKeysConfig` |
+| `com.voidterm.app` | Activity, UI, styling: `TermuxActivity`, `SessionManager`, `SessionListAdapter`, `GameBoyControlPanel`, `CompactToolbar`, `MacroExecutor`, `MacroEditDialog`, `TerminalStyleDialog`, `SettingsDialog`, `ExtraKeysConfig` |
 
 ### JNI Layer
 
@@ -190,6 +193,18 @@ The back key behavior is configurable via `SettingsDialog` (Spinner). Three mode
 `WhisperBridge.release()` guards `nativeFree()` behind a `thread.isAlive()` check after join — leak over crash. When `isDestroyed` is true during a pending callback, `onError` is posted instead of silently dropping the callback.
 
 Bootstrap callbacks in `TermuxActivity` guard with `if (isDestroyed()) return;` to prevent UI operations after Activity destruction. `TermuxActivity.onDestroy()` calls `viewClient.release()` to unregister its `SharedPreferences` listener.
+
+### Multi-Session Support (Left Drawer)
+
+`SessionManager` manages a `List<TerminalSession>` with a current index. Sessions are created via `createSession()` (used by `TermuxActivity.createNewSession()`), switched via `switchToSession(int)`, and removed via `removeSession(TerminalSession)`. When the last session is removed, the caller creates a new one automatically. `SessionChangeListener` notifies `TermuxActivity` on add/switch/remove/list-change events.
+
+The drawer UI is a `DrawerLayout` that wraps `rootLayout`. The drawer panel (280dp, `Gravity.START`) contains a "Sessions" header, a `ListView` backed by `SessionListAdapter`, and a "+ New Session" button. Drawer is accessible via swipe-from-left or the "Sessions" entry in the context menu.
+
+`SessionListAdapter` (`BaseAdapter`, programmatic layout) shows each session as: green/gray dot (active indicator) + session name (monospace) + close button. Tapping switches sessions, close button removes sessions.
+
+`TermuxTerminalSessionClient` guards `onTextChanged`/`onColorsChanged` to only update the terminal view for the active session. `onSessionFinished` delegates to `TermuxActivity.onSessionFinished()` which calls `sessionManager.removeSession()`.
+
+Voice pipeline, control panels, and macros all use `getCurrentSession()` which delegates to `sessionManager.getCurrentSession()` — no changes needed in those systems.
 
 ### Panel State Synchronization
 

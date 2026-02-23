@@ -26,8 +26,11 @@ import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
+
+import androidx.drawerlayout.widget.DrawerLayout;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -53,7 +56,7 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
     private static final String TAG = "TermuxActivity";
 
     private TerminalView terminalView;
-    private TerminalSession terminalSession;
+    private SessionManager sessionManager;
     private TermuxTerminalSessionClient sessionClient;
     private VoidTermTerminalViewClient viewClient;
 
@@ -66,6 +69,9 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
     private boolean keyboardVisible = false;
     private ViewTreeObserver.OnGlobalLayoutListener layoutListener;
     private final Rect visibleDisplayRect = new Rect();
+
+    private DrawerLayout drawerLayout;
+    private SessionListAdapter sessionListAdapter;
 
     private TermuxBootstrapInstaller bootstrapInstaller;
     private LinearLayout rootLayout;
@@ -136,7 +142,52 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         // Control panels (GameBoy, Compact, CompactToolbar)
         panelController = new PanelController(this, rootLayout, this);
 
-        setContentView(rootLayout);
+        // SessionManager
+        sessionManager = new SessionManager();
+        sessionManager.setListener(new SessionManager.SessionChangeListener() {
+            @Override
+            public void onSessionSwitched(TerminalSession session) {
+                sessionClient.setSession(session);
+                terminalView.attachSession(session);
+                session.updateTerminalSessionClient(sessionClient);
+            }
+
+            @Override
+            public void onSessionAdded(TerminalSession session) {
+                sessionClient.setSession(session);
+                terminalView.attachSession(session);
+                session.updateTerminalSessionClient(sessionClient);
+            }
+
+            @Override
+            public void onSessionRemoved(TerminalSession removed, TerminalSession switchedTo) {
+                // If no sessions left, createNewSession() will be called by the caller
+            }
+
+            @Override
+            public void onSessionListChanged() {
+                if (sessionListAdapter != null) {
+                    sessionListAdapter.update(
+                            sessionManager.getSessions(),
+                            sessionManager.getCurrentIndex());
+                }
+            }
+        });
+
+        // Wrap rootLayout in DrawerLayout
+        drawerLayout = new DrawerLayout(this);
+        drawerLayout.addView(rootLayout, new DrawerLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+
+        // Build drawer panel
+        LinearLayout drawerPanel = buildDrawerPanel();
+        DrawerLayout.LayoutParams drawerLp = new DrawerLayout.LayoutParams(
+                dp(280), ViewGroup.LayoutParams.MATCH_PARENT);
+        drawerLp.gravity = Gravity.START;
+        drawerLayout.addView(drawerPanel, drawerLp);
+
+        setContentView(drawerLayout);
 
         // Keyboard visibility detection via layout height change
         layoutListener = () -> {
@@ -185,7 +236,11 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         }
     }
 
-    private void startTerminalSession() {
+    /**
+     * Create a new terminal session via SessionManager.
+     * SessionManager listener handles attachSession/setSession.
+     */
+    private void createNewSession() {
         try {
             String filesDir = getFilesDir().getAbsolutePath();
             String prefix = filesDir + "/usr";
@@ -216,23 +271,15 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
                 args = new String[]{shell};
             }
 
-            terminalSession = new TerminalSession(
-                    shell,
-                    home,
-                    args,
-                    env,
-                    null,
-                    sessionClient
-            );
+            TerminalSession session = sessionManager.createSession(
+                    shell, home, args, env, sessionClient);
 
-            terminalView.attachSession(terminalSession);
-            sessionClient.setSession(terminalSession);
-
-            Log.i(TAG, "Terminal session started: shell=" + shell + " home=" + home);
+            Log.i(TAG, "Terminal session created: " + session.mSessionName
+                    + " shell=" + shell + " home=" + home);
         } catch (Exception e) {
-            Log.e(TAG, "Failed to start terminal session", e);
+            Log.e(TAG, "Failed to create terminal session", e);
             if (diagnosticLog != null) {
-                diagnosticLog.error(TAG, "Failed to start terminal session", e);
+                diagnosticLog.error(TAG, "Failed to create terminal session", e);
             }
         }
     }
@@ -384,7 +431,7 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
     }
 
     private void startTerminalAndInit() {
-        startTerminalSession();
+        createNewSession();
         initVoiceInput();
         initQuestInput();
         initExtraKeys();
@@ -514,8 +561,9 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
 
         if (SettingsDialog.BACK_MACRO.equals(behavior)) {
             String macro = prefs.getString(SettingsDialog.KEY_BACK_MACRO, "");
-            if (!macro.isEmpty() && terminalSession != null) {
-                MacroExecutor.execute(macro, terminalSession::write,
+            TerminalSession current = getCurrentSession();
+            if (!macro.isEmpty() && current != null) {
+                MacroExecutor.execute(macro, current::write,
                         terminalView != null ? terminalView.getHandler() : null);
             }
             return true;
@@ -551,8 +599,9 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
 
     @Override
     public void onSendToTerminal(String text) {
-        if (terminalSession != null) {
-            terminalSession.write(text);
+        TerminalSession current = getCurrentSession();
+        if (current != null) {
+            current.write(text);
         }
     }
 
@@ -647,8 +696,9 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         ClipData clipData = clipboard.getPrimaryClip();
         if (clipData == null || clipData.getItemCount() == 0) return;
         CharSequence text = clipData.getItemAt(0).coerceToText(this);
-        if (text != null && terminalSession != null) {
-            terminalSession.write(text.toString());
+        TerminalSession current = getCurrentSession();
+        if (text != null && current != null) {
+            current.write(text.toString());
         }
     }
 
@@ -663,7 +713,7 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
      * Get the current terminal session.
      */
     public TerminalSession getCurrentSession() {
-        return terminalSession;
+        return sessionManager != null ? sessionManager.getCurrentSession() : null;
     }
 
     /**
@@ -713,6 +763,7 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
     private static final int CONTEXT_MENU_TOGGLE_KEYBOARD = 3;
     private static final int CONTEXT_MENU_PASTE = 4;
     private static final int CONTEXT_MENU_STYLE = 5;
+    private static final int CONTEXT_MENU_SESSIONS = 6;
 
     @Override
     public void onCreateContextMenu(ContextMenu menu, View v, ContextMenu.ContextMenuInfo menuInfo) {
@@ -725,6 +776,7 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         }
         menu.add(0, CONTEXT_MENU_SELECT_URL, 0, "Select URL");
         menu.add(0, CONTEXT_MENU_STYLE, 0, "Style");
+        menu.add(0, CONTEXT_MENU_SESSIONS, 0, "Sessions");
         menu.add(0, CONTEXT_MENU_RESET_TERMINAL, 0, "Reset terminal");
         menu.add(0, CONTEXT_MENU_TOGGLE_KEYBOARD, 0, "Toggle keyboard");
     }
@@ -749,14 +801,21 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
             case CONTEXT_MENU_SELECT_URL:
                 selectUrlFromTerminal();
                 return true;
-            case CONTEXT_MENU_RESET_TERMINAL:
-                if (terminalSession != null) {
-                    terminalSession.reset();
+            case CONTEXT_MENU_RESET_TERMINAL: {
+                TerminalSession resetSession = getCurrentSession();
+                if (resetSession != null) {
+                    resetSession.reset();
                     terminalView.invalidate();
                 }
                 return true;
+            }
             case CONTEXT_MENU_STYLE:
                 new TerminalStyleDialog(this, terminalView).show();
+                return true;
+            case CONTEXT_MENU_SESSIONS:
+                if (drawerLayout != null) {
+                    drawerLayout.openDrawer(Gravity.START);
+                }
                 return true;
             case CONTEXT_MENU_TOGGLE_KEYBOARD:
                 android.view.inputmethod.InputMethodManager imm =
@@ -790,6 +849,132 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         }
     }
 
+    // --- Session management ---
+
+    /**
+     * Build the drawer panel containing the session list and "New Session" button.
+     * Programmatic layout (no XML), consistent with VoidTerm's style.
+     */
+    private LinearLayout buildDrawerPanel() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setBackgroundColor(0xFF1A1A1A);
+
+        // Header
+        TextView header = new TextView(this);
+        header.setText("Sessions");
+        header.setTextColor(0xFF44CC44);
+        header.setTextSize(16);
+        header.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        header.setPadding(dp(16), dp(16), dp(16), dp(12));
+        panel.addView(header);
+
+        // Divider
+        View divider = new View(this);
+        divider.setBackgroundColor(0xFF333333);
+        panel.addView(divider, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+
+        // Session list
+        ListView listView = new ListView(this);
+        listView.setBackgroundColor(0xFF1A1A1A);
+        listView.setDivider(null);
+        listView.setDividerHeight(0);
+
+        sessionListAdapter = new SessionListAdapter(this, new SessionListAdapter.SessionListCallback() {
+            @Override
+            public void onSessionTapped(int index) {
+                sessionManager.switchToSession(index);
+                drawerLayout.closeDrawers();
+            }
+
+            @Override
+            public void onSessionCloseRequested(int index) {
+                if (index >= 0 && index < sessionManager.getSessionCount()) {
+                    TerminalSession toRemove = sessionManager.getSessions().get(index);
+                    TerminalSession next = sessionManager.removeSession(toRemove);
+                    if (next == null) {
+                        createNewSession();
+                    }
+                }
+            }
+
+            @Override
+            public void onSessionRenameRequested(int index) {
+                showRenameSessionDialog(index);
+            }
+        });
+        listView.setAdapter(sessionListAdapter);
+
+        panel.addView(listView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        // Bottom divider
+        View bottomDivider = new View(this);
+        bottomDivider.setBackgroundColor(0xFF333333);
+        panel.addView(bottomDivider, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+
+        // "+ New Session" button
+        TextView newBtn = new TextView(this);
+        newBtn.setText("+ New Session");
+        newBtn.setTextColor(0xFF44CC44);
+        newBtn.setTextSize(14);
+        newBtn.setTypeface(Typeface.MONOSPACE);
+        newBtn.setPadding(dp(16), dp(12), dp(16), dp(12));
+        newBtn.setOnClickListener(v -> {
+            createNewSession();
+            drawerLayout.closeDrawers();
+        });
+        panel.addView(newBtn);
+
+        return panel;
+    }
+
+    /**
+     * Called by TermuxTerminalSessionClient when a session's process exits.
+     * Removes the session and auto-switches or creates a new one.
+     */
+    public void onSessionFinished(TerminalSession finishedSession) {
+        if (sessionManager == null) return;
+        runOnUiThread(() -> {
+            TerminalSession next = sessionManager.removeSession(finishedSession);
+            if (next == null) {
+                createNewSession();
+            }
+        });
+    }
+
+    private void showRenameSessionDialog(int index) {
+        if (index < 0 || index >= sessionManager.getSessionCount()) return;
+        TerminalSession session = sessionManager.getSessions().get(index);
+
+        android.widget.EditText input = new android.widget.EditText(this);
+        input.setText(session.mSessionName);
+        input.setTextColor(Color.WHITE);
+        input.setSelectAllOnFocus(true);
+        int pad = dp(24);
+        input.setPadding(pad, pad, pad, dp(8));
+
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Rename session")
+                .setView(input)
+                .setPositiveButton("OK", (dialog, which) -> {
+                    String name = input.getText().toString().trim();
+                    if (!name.isEmpty()) {
+                        sessionManager.renameSession(index, name);
+                    }
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private int dp(int value) {
+        return (int) TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP, value,
+                getResources().getDisplayMetrics());
+    }
+
     @Override
     protected void onPause() {
         super.onPause();
@@ -819,8 +1004,8 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
             voiceInputManager.destroy();
             voiceInputManager = null;
         }
-        if (terminalSession != null) {
-            terminalSession.finishIfRunning();
+        if (sessionManager != null) {
+            sessionManager.finishAllSessions();
         }
         Log.i(TAG, "VoidTerm destroyed");
     }
