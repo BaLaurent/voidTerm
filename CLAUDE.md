@@ -206,10 +206,22 @@ Tapping the terminal view toggles the soft keyboard via `VoidTermTerminalViewCli
 
 ### Back Key Behavior
 
-The back key behavior is configurable via `SettingsDialog` (Spinner). Three modes persisted in `SharedPreferences` ("voidterm_settings" / "back_key_behavior"):
+The back key behavior is configurable via `SettingsDialog` (Spinner). Four modes persisted in `SharedPreferences` ("voidterm_settings" / "back_key_behavior"):
 - **Escape** (default): `VoidTermTerminalViewClient.shouldBackButtonBeMappedToEscape()` returns `true`, TerminalView sends `\033`.
 - **Toggle Keyboard**: `shouldBackButtonBeMappedToEscape()` returns `false`, `TermuxActivity.handleCustomBackKey()` toggles soft input.
 - **Macro**: same dispatch path, executes a user-defined macro command (stored in "back_key_macro") via `MacroExecutor`. Supports full `{tag}` syntax.
+- **Voice Input**: same dispatch path, calls `onVoiceToggle()` to start/stop voice recording (Push-to-Talk).
+
+### Volume Key Behavior
+
+Volume Up and Volume Down are independently configurable via `SettingsActivity` (Spinner). Five modes each, persisted in `SharedPreferences` ("voidterm_settings" / "volume_up_behavior" and "volume_down_behavior"):
+- **Default** (default): system volume control, key not intercepted.
+- **Escape**: sends `\033` to the terminal session.
+- **Toggle Keyboard**: toggles soft input.
+- **Macro**: executes a user-defined macro command (stored in "volume_up_macro" / "volume_down_macro") via `MacroExecutor`. Supports full `{tag}` syntax.
+- **Voice Input**: triggers `onVoiceToggle()`.
+
+Handled entirely in `TermuxActivity.handleCustomVolumeKey(int keyCode)` — no `VoidTermTerminalViewClient` or `TerminalView` layer needed (unlike back key).
 
 ### Lifecycle & Error Recovery
 

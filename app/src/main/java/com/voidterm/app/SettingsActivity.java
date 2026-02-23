@@ -45,7 +45,8 @@ public class SettingsActivity extends Activity {
     private static final int SECTION_TRANSCRIPTION = 1;
     private static final int SECTION_INTERFACE = 2;
     private static final int SECTION_BACK_KEY = 3;
-    private static final int SECTION_COUNT = 4;
+    private static final int SECTION_VOLUME_KEYS = 4;
+    private static final int SECTION_COUNT = 5;
 
     private SharedPreferences prefs;
     private InterfaceTheme theme;
@@ -66,6 +67,8 @@ public class SettingsActivity extends Activity {
     // Text fields that need saving onPause
     private EditText promptField;
     private EditText macroField;
+    private EditText volumeUpMacroField;
+    private EditText volumeDownMacroField;
 
     // Guard against spinner listeners firing during programmatic setSelection()
     private boolean initializing = true;
@@ -108,6 +111,10 @@ public class SettingsActivity extends Activity {
         sectionBodies[SECTION_BACK_KEY] = buildBackKeySection();
         root.addView(sectionBodies[SECTION_BACK_KEY]);
 
+        buildSectionHeader(SECTION_VOLUME_KEYS, "Volume Keys", theme.modifier);
+        sectionBodies[SECTION_VOLUME_KEYS] = buildVolumeKeysSection();
+        root.addView(sectionBodies[SECTION_VOLUME_KEYS]);
+
         // Initial accordion state: only first section visible
         for (int i = 0; i < SECTION_COUNT; i++) {
             sectionBodies[i].setVisibility(i == expandedSection ? View.VISIBLE : View.GONE);
@@ -138,6 +145,14 @@ public class SettingsActivity extends Activity {
         if (macroField != null) {
             prefs.edit().putString(SettingsDialog.KEY_BACK_MACRO,
                     macroField.getText().toString()).apply();
+        }
+        if (volumeUpMacroField != null) {
+            prefs.edit().putString(SettingsDialog.KEY_VOLUME_UP_MACRO,
+                    volumeUpMacroField.getText().toString()).apply();
+        }
+        if (volumeDownMacroField != null) {
+            prefs.edit().putString(SettingsDialog.KEY_VOLUME_DOWN_MACRO,
+                    volumeDownMacroField.getText().toString()).apply();
         }
     }
 
@@ -625,9 +640,10 @@ public class SettingsActivity extends Activity {
     private LinearLayout buildBackKeySection() {
         LinearLayout body = makeSectionBody();
 
-        String[] backOptions = {"Escape", "Toggle Keyboard", "Macro"};
+        String[] backOptions = {"Escape", "Toggle Keyboard", "Macro", "Voice Input"};
         String[] backValues = {SettingsDialog.BACK_ESCAPE,
-                SettingsDialog.BACK_TOGGLE_KEYBOARD, SettingsDialog.BACK_MACRO};
+                SettingsDialog.BACK_TOGGLE_KEYBOARD, SettingsDialog.BACK_MACRO,
+                SettingsDialog.BACK_VOICE};
         String currentBack = prefs.getString(SettingsDialog.KEY_BACK_BEHAVIOR,
                 SettingsDialog.BACK_ESCAPE);
 
@@ -654,6 +670,79 @@ public class SettingsActivity extends Activity {
                 prefs.edit().putString(SettingsDialog.KEY_BACK_BEHAVIOR,
                         backValues[pos]).apply();
                 macroField.setVisibility(pos == 2 ? View.VISIBLE : View.GONE);
+            }
+        });
+
+        return body;
+    }
+
+    // --- Section: Volume Keys ---
+
+    private LinearLayout buildVolumeKeysSection() {
+        LinearLayout body = makeSectionBody();
+
+        String[] volOptions = {"Default (system volume)", "Escape", "Toggle Keyboard", "Macro", "Voice Input"};
+        String[] volValues = {SettingsDialog.VOLUME_DEFAULT, SettingsDialog.BACK_ESCAPE,
+                SettingsDialog.BACK_TOGGLE_KEYBOARD, SettingsDialog.BACK_MACRO,
+                SettingsDialog.BACK_VOICE};
+
+        // --- Volume Up ---
+        body.addView(makeSubheading("Volume Up"));
+
+        String currentUp = prefs.getString(SettingsDialog.KEY_VOLUME_UP_BEHAVIOR,
+                SettingsDialog.VOLUME_DEFAULT);
+        Spinner upSpinner = makeSpinner(volOptions);
+        upSpinner.setSelection(findIndex(volValues, currentUp));
+        body.addView(upSpinner);
+
+        volumeUpMacroField = new EditText(this);
+        volumeUpMacroField.setHint("Macro command (e.g. {ctrl+c})");
+        volumeUpMacroField.setTextColor(textColor);
+        volumeUpMacroField.setHintTextColor(hintColor);
+        volumeUpMacroField.setTextSize(14);
+        volumeUpMacroField.setSingleLine(true);
+        volumeUpMacroField.setText(prefs.getString(SettingsDialog.KEY_VOLUME_UP_MACRO, ""));
+        volumeUpMacroField.setVisibility(
+                SettingsDialog.BACK_MACRO.equals(currentUp) ? View.VISIBLE : View.GONE);
+        body.addView(volumeUpMacroField);
+
+        upSpinner.setOnItemSelectedListener(new SimpleItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> p, View v, int pos, long id) {
+                prefs.edit().putString(SettingsDialog.KEY_VOLUME_UP_BEHAVIOR,
+                        volValues[pos]).apply();
+                volumeUpMacroField.setVisibility(pos == 3 ? View.VISIBLE : View.GONE);
+            }
+        });
+
+        body.addView(makeDivider());
+
+        // --- Volume Down ---
+        body.addView(makeSubheading("Volume Down"));
+
+        String currentDown = prefs.getString(SettingsDialog.KEY_VOLUME_DOWN_BEHAVIOR,
+                SettingsDialog.VOLUME_DEFAULT);
+        Spinner downSpinner = makeSpinner(volOptions);
+        downSpinner.setSelection(findIndex(volValues, currentDown));
+        body.addView(downSpinner);
+
+        volumeDownMacroField = new EditText(this);
+        volumeDownMacroField.setHint("Macro command (e.g. {ctrl+c})");
+        volumeDownMacroField.setTextColor(textColor);
+        volumeDownMacroField.setHintTextColor(hintColor);
+        volumeDownMacroField.setTextSize(14);
+        volumeDownMacroField.setSingleLine(true);
+        volumeDownMacroField.setText(prefs.getString(SettingsDialog.KEY_VOLUME_DOWN_MACRO, ""));
+        volumeDownMacroField.setVisibility(
+                SettingsDialog.BACK_MACRO.equals(currentDown) ? View.VISIBLE : View.GONE);
+        body.addView(volumeDownMacroField);
+
+        downSpinner.setOnItemSelectedListener(new SimpleItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> p, View v, int pos, long id) {
+                prefs.edit().putString(SettingsDialog.KEY_VOLUME_DOWN_BEHAVIOR,
+                        volValues[pos]).apply();
+                volumeDownMacroField.setVisibility(pos == 3 ? View.VISIBLE : View.GONE);
             }
         });
 

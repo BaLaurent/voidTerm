@@ -41,6 +41,12 @@ public final class SettingsDialog {
     public static final String BACK_ESCAPE = "escape";
     public static final String BACK_TOGGLE_KEYBOARD = "toggle_keyboard";
     public static final String BACK_MACRO = "macro";
+    public static final String BACK_VOICE = "voice_input";
+    public static final String KEY_VOLUME_UP_BEHAVIOR = "volume_up_behavior";
+    public static final String KEY_VOLUME_DOWN_BEHAVIOR = "volume_down_behavior";
+    public static final String KEY_VOLUME_UP_MACRO = "volume_up_macro";
+    public static final String KEY_VOLUME_DOWN_MACRO = "volume_down_macro";
+    public static final String VOLUME_DEFAULT = "default";
     public static final String DEFAULT_MODEL = "ggml-base.bin";
     public static final int REQUEST_MODEL_FILE = 1001;
     public static final String KEY_MODEL_RELOAD_REQUESTED = "model_reload_requested";
