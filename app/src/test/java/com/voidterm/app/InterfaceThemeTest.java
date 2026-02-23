@@ -9,6 +9,8 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 /**
  * Unit tests for {@link InterfaceTheme} enum: color utilities, enum values,
@@ -124,6 +126,55 @@ public class InterfaceThemeTest {
         InterfaceTheme.save(context, InterfaceTheme.HACKERBOY);
         assertEquals(InterfaceTheme.HACKERBOY, InterfaceTheme.current(context));
     }
+
+    // ---------------------------------------------------------------
+    // isLightColor() tests
+    // ---------------------------------------------------------------
+
+    @Test
+    public void isLightColor_white_returnsTrue() {
+        assertTrue(InterfaceTheme.isLightColor(0xFFFFFFFF));
+    }
+
+    @Test
+    public void isLightColor_black_returnsFalse() {
+        assertFalse(InterfaceTheme.isLightColor(0xFF000000));
+    }
+
+    @Test
+    public void isLightColor_gameboyBackground_returnsTrue() {
+        // GameBoy cream 0xFFC4C4B4: brightness ~ 0.299*196 + 0.587*196 + 0.114*180 ≈ 194
+        assertTrue(InterfaceTheme.isLightColor(InterfaceTheme.GAMEBOY.drawerBg));
+    }
+
+    @Test
+    public void isLightColor_hackerBoyBackground_returnsFalse() {
+        // HackerBoy 0xFF0D0D0D: brightness ~ 13
+        assertFalse(InterfaceTheme.isLightColor(InterfaceTheme.HACKERBOY.drawerBg));
+    }
+
+    // ---------------------------------------------------------------
+    // drawerBg / drawerAccent field tests
+    // ---------------------------------------------------------------
+
+    @Test
+    public void allThemesHaveNonZeroDrawerColors() {
+        for (InterfaceTheme theme : InterfaceTheme.values()) {
+            assertTrue("drawerBg should be non-zero for " + theme.label,
+                    theme.drawerBg != 0);
+            assertTrue("drawerAccent should be non-zero for " + theme.label,
+                    theme.drawerAccent != 0);
+        }
+    }
+
+    @Test
+    public void gameboyDrawerBg_matchesPanelBackground() {
+        assertEquals(InterfaceTheme.GAMEBOY.background, InterfaceTheme.GAMEBOY.drawerBg);
+    }
+
+    // ---------------------------------------------------------------
+    // current() and save() SharedPreferences tests (continued)
+    // ---------------------------------------------------------------
 
     @Test
     public void current_returnsGameboyForInvalidThemeName() {

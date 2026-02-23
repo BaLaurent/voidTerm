@@ -58,7 +58,7 @@ User confirms (Enter) → VoiceInputCallback.onVoiceTextReady() → Terminal PTY
 | `com.voidterm.contracts` | Shared interfaces: `VoiceState`, `VoiceInputCallback`, `TranscriptionListener`, `ControlPanel`, `ControlPanelListener` |
 | `com.voidterm.voice` | Voice system: `VoiceInputManager`, `AudioCapture`, `AudioPreprocessor`, `AudioConfig`, `WhisperBridge`, `TranscriptionOverlay` |
 | `com.voidterm.input` | Controller mapping: `QuestInputHandler` |
-| `com.voidterm.app` | Activity, UI, styling: `TermuxActivity`, `SessionManager`, `SessionListAdapter`, `GameBoyControlPanel`, `CompactToolbar`, `MacroExecutor`, `MacroEditDialog`, `TerminalStyleDialog`, `SettingsDialog`, `ExtraKeysConfig` |
+| `com.voidterm.app` | Activity, UI, styling: `TermuxActivity`, `SessionManager`, `SessionListAdapter`, `GameBoyControlPanel`, `CompactToolbar`, `MacroExecutor`, `MacroEditDialog`, `TerminalStyleDialog`, `SettingsDialog`, `SettingsActivity`, `InterfaceTheme`, `ExtraKeysConfig` |
 
 ### JNI Layer
 
@@ -119,9 +119,17 @@ All three panels use `onDetachedFromWindow()` to cancel arrow repeat runnables a
 
 Supported tags: `{esc}`, `{enter}`, `{tab}`, `{up}`, `{down}`, `{left}`, `{right}`, `{home}`, `{end}`, `{f1}`-`{f12}`, `{ctrl+a}`-`{ctrl+z}`, `{shift+KEY}`, `{alt+KEY}`, `{wait:N}` (delay ms). Escaped braces: `{{` → `{`, `}}` → `}`.
 
+### Interface Theming
+
+`InterfaceTheme` enum defines 4 themes (GAMEBOY, DARK_GAMEBOY, ATOMIC_PURPLE, HACKERBOY), each with 7 panel colors + 2 drawer colors (`drawerBg`, `drawerAccent`). Static helpers: `darkenColor()`, `lightenColor()`, `isLightColor()` (luminance-based light/dark detection). Persisted via `SettingsDialog.KEY_THEME`.
+
+The session drawer (`TermuxActivity.buildDrawerPanel()`) and `SessionListAdapter` use `drawerBg`/`drawerAccent` for theme-consistent colors. Text color adapts via `isLightColor(drawerBg)` — dark text on light backgrounds (GameBoy cream), light text on dark backgrounds. `TermuxActivity.rebuildDrawerPanel()` replaces the drawer panel on theme change.
+
+`SettingsActivity` (full-screen, programmatic layout) computes adaptive colors from `theme.background` via `computeDerivedColors()`: `surfaceColor`, `bodyColor`, `textColor`, `mutedColor`, `hintColor`. Theme change triggers `recreate()` with `savedInstanceState` to preserve expanded accordion section.
+
 ### Settings & Model Selection
 
-`SettingsDialog` (AlertDialog in ScrollView, programmatic layout like `TerminalStyleDialog`) lets users select a custom whisper.cpp model file via Android's `ACTION_OPEN_DOCUMENT` file picker. The selected file is copied to `{filesDir}/models/`, its name persisted in `SharedPreferences` ("voidterm_settings" / "whisper_model_name"), and hot-reloaded via `VoiceInputManager.reloadModel()`. Default model: `ggml-base.bin` (bundled in assets). `WhisperBridge.loadModel()` checks `{filesDir}/models/` first, falls back to assets, and returns a clear error if neither exists. GPU toggle (default off) controls `whisper_context_params.use_gpu`. `WhisperBridge` selects the FP16 library variant at runtime if `Build.VERSION.SDK_INT >= 27` (ARMv8.2-A support).
+`SettingsActivity` (full-screen Activity, programmatic layout) lets users select a custom whisper.cpp model file via Android's `ACTION_OPEN_DOCUMENT` file picker. `SettingsDialog` holds all preference key constants and label/value arrays. The selected file is copied to `{filesDir}/models/`, its name persisted in `SharedPreferences` ("voidterm_settings" / "whisper_model_name"), and hot-reloaded via `VoiceInputManager.reloadModel()`. Default model: `ggml-base.bin` (bundled in assets). `WhisperBridge.loadModel()` checks `{filesDir}/models/` first, falls back to assets, and returns a clear error if neither exists. GPU toggle (default off) controls `whisper_context_params.use_gpu`. `WhisperBridge` selects the FP16 library variant at runtime if `Build.VERSION.SDK_INT >= 27` (ARMv8.2-A support). `TermuxActivity.onResume()` calls `applyTheme()` to sync theme after returning from SettingsActivity.
 
 ### Transcription Settings
 
