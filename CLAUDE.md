@@ -203,6 +203,18 @@ All three panels implement the `ControlPanel` interface (`com.voidterm.contracts
 
 All preference keys for `voidterm_settings` are centralized as `public static final` constants in `SettingsDialog` (e.g. `SettingsDialog.KEY_WHISPER_LANGUAGE`). Other classes (VoiceInputManager, DeviceProfiler, InterfaceTheme) reference these constants — never raw strings. This ensures the compiler catches key renames.
 
+### Path Remapping (com.termux → com.voidterm)
+
+Termux binaries have `/data/data/com.termux/files/usr` hardcoded in ELF .rodata. Three-layer remapping strategy:
+
+1. **ELF patcher** (`TermuxBootstrapInstaller.patchTermuxPaths()`): Binary replacement `com.termux/files` → `com.voidterm/fil` (same-length, 16 chars). Symlink `fil → files` resolves paths. Also patches `com.termux/cache` → `com.voidterm/cac`. Text files get variable-length `com.termux` → `com.voidterm` replacement. Controlled by `PATCH_VERSION` (currently 11) — bump to force re-scan of all `$PREFIX` files.
+
+2. **DPkg post-invoke hook** (`$PREFIX/lib/voidterm-patch-new.sh`): Registered via `$PREFIX/etc/apt/apt.conf.d/99-voidterm-patcher.conf`. Auto-patches ELF (via `perl -pi`) and text files (via `grep -I` + `sed -i`) after each `apt install`. Only processes `.list` files modified in last 2 minutes. **Critical**: apt config must reference `prefixDir` path (not `stagingDir`) — the staging dir is renamed after bootstrap install.
+
+3. **LD_PRELOAD** (`libvoidterm-remap.so` / `voidterm_remap.c`): 14 file-access hooks (open, mkdir, stat, etc.) remap `/data/data/com.termux/` → `/data/data/com.voidterm/` at runtime. Copied from APK native libs to `$PREFIX/lib/` by `TermuxActivity.copyRemapLibrary()`. Set in initial environment by `buildEnvironment()`. `.bashrc` snippet re-adds it after Termux profile overwrites `LD_PRELOAD`. Does NOT hook `execve()` — `libtermux-exec.so` bypasses PLT for exec, making our hook unreachable.
+
+Build requirements for LD_PRELOAD: `extractNativeLibs=true` in AndroidManifest.xml, `useLegacyPackaging=true` in build.gradle (ensures .so files are extractable, not stored compressed in APK).
+
 ## Code Review & Remediation
 
 `plans/CODE_REVIEW.md` documents 61 findings from a 5-agent parallel code review (concurrency, JNI, UI, architecture, config). Phases 1-4 completed (36 findings fixed). Phase 5 (interface commune panels) completed. Completion reports in `plans/completed/`.
