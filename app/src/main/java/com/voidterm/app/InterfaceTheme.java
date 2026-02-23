@@ -19,8 +19,8 @@ public enum InterfaceTheme {
         0xFF3C3C6E, // modifier
         0xFF585858, // macro
         0xFF9BBC0F, // active
-        0xFF33312A, // drawerBg — warm dark gray, echoes cream body
-        0xFF9BBC0F  // drawerAccent — lime green, classic GameBoy screen
+        0xFFC4C4B4, // drawerBg — cream, matches panel background
+        0xFF9B2257  // drawerAccent — wine/magenta, matches A/B buttons
     ),
     DARK_GAMEBOY(
         "Dark GameBoy",
@@ -113,5 +113,13 @@ public enum InterfaceTheme {
         int g = Math.min(255, (int) (Color.green(color) * factor));
         int b = Math.min(255, (int) (Color.blue(color) * factor));
         return Color.argb(Color.alpha(color), r, g, b);
+    }
+
+    /** True if the color is perceptually light (needs dark text on top). */
+    public static boolean isLightColor(int color) {
+        double brightness = 0.299 * Color.red(color)
+                + 0.587 * Color.green(color)
+                + 0.114 * Color.blue(color);
+        return brightness > 128;
     }
 }

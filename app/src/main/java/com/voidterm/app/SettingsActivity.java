@@ -49,11 +49,18 @@ public class SettingsActivity extends Activity {
 
     private SharedPreferences prefs;
     private InterfaceTheme theme;
+    // Derived colors from theme — recomputed on theme change
+    private int surfaceColor;   // main background
+    private int bodyColor;      // section body background
+    private int textColor;      // primary text
+    private int mutedColor;     // secondary/label text
+    private int hintColor;      // placeholder text
 
     private ScrollView scrollView;
     private LinearLayout root;
     private final LinearLayout[] sectionBodies = new LinearLayout[SECTION_COUNT];
     private final View[] sectionHeaders = new View[SECTION_COUNT];
+    private static final String KEY_EXPANDED_SECTION = "expanded_section";
     private int expandedSection = SECTION_MODEL;
 
     // Text fields that need saving onPause
@@ -69,9 +76,14 @@ public class SettingsActivity extends Activity {
 
         prefs = getSharedPreferences(SettingsDialog.PREFS_NAME, MODE_PRIVATE);
         theme = InterfaceTheme.current(this);
+        computeDerivedColors();
+
+        if (savedInstanceState != null) {
+            expandedSection = savedInstanceState.getInt(KEY_EXPANDED_SECTION, SECTION_MODEL);
+        }
 
         scrollView = new ScrollView(this);
-        scrollView.setBackgroundColor(theme.cross);
+        scrollView.setBackgroundColor(surfaceColor);
         scrollView.setFillViewport(true);
 
         root = new LinearLayout(this);
@@ -110,6 +122,12 @@ public class SettingsActivity extends Activity {
     }
 
     @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putInt(KEY_EXPANDED_SECTION, expandedSection);
+    }
+
+    @Override
     protected void onPause() {
         super.onPause();
         // Save text fields
@@ -141,7 +159,8 @@ public class SettingsActivity extends Activity {
     private void buildSectionHeader(int index, String label, int color) {
         TextView header = new TextView(this);
         header.setText(label);
-        header.setTextColor(Color.WHITE);
+        int headerTextColor = InterfaceTheme.isLightColor(color) ? 0xFF1A1A1A : Color.WHITE;
+        header.setTextColor(headerTextColor);
         header.setTextSize(16);
         header.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
         header.setGravity(Gravity.CENTER_VERTICAL);
@@ -213,7 +232,7 @@ public class SettingsActivity extends Activity {
 
         TextView modelLabel = new TextView(this);
         modelLabel.setText("Current: " + currentModel);
-        modelLabel.setTextColor(Color.WHITE);
+        modelLabel.setTextColor(textColor);
         modelLabel.setTextSize(14);
         modelLabel.setPadding(0, 0, 0, dp(12));
         body.addView(modelLabel);
@@ -305,7 +324,7 @@ public class SettingsActivity extends Activity {
             TextView tierInfo = new TextView(this);
             tierInfo.setText("Performance: " + tierName.charAt(0)
                     + tierName.substring(1).toLowerCase() + " (" + benchmarkMs + "ms)");
-            tierInfo.setTextColor(0xFFCCCCCC);
+            tierInfo.setTextColor(mutedColor);
             tierInfo.setTextSize(13);
             tierInfo.setPadding(0, 0, 0, dp(8));
             body.addView(tierInfo);
@@ -349,8 +368,8 @@ public class SettingsActivity extends Activity {
         body.addView(makeLabel("Initial prompt"));
         promptField = new EditText(this);
         promptField.setHint("Domain terms, names...");
-        promptField.setTextColor(Color.WHITE);
-        promptField.setHintTextColor(0xAA999999);
+        promptField.setTextColor(textColor);
+        promptField.setHintTextColor(hintColor);
         promptField.setTextSize(14);
         promptField.setSingleLine(true);
         promptField.setFilters(new InputFilter[]{new InputFilter.LengthFilter(500)});
@@ -394,12 +413,27 @@ public class SettingsActivity extends Activity {
             tuningBtn.setEnabled(checked);
         });
 
-        // --- Advanced divider ---
+        // --- Advanced (collapsible) ---
         body.addView(makeDivider());
-        body.addView(makeSubheading("Advanced"));
+
+        LinearLayout advancedContainer = new LinearLayout(this);
+        advancedContainer.setOrientation(LinearLayout.VERTICAL);
+        advancedContainer.setVisibility(View.GONE);
+
+        Button advancedBtn = makeActionButton("Advanced...");
+        advancedBtn.setOnClickListener(v -> {
+            if (advancedContainer.getVisibility() == View.GONE) {
+                advancedContainer.setVisibility(View.VISIBLE);
+                advancedBtn.setText("Advanced \u25B2");
+            } else {
+                advancedContainer.setVisibility(View.GONE);
+                advancedBtn.setText("Advanced...");
+            }
+        });
+        body.addView(advancedBtn);
 
         // Temperature spinner
-        body.addView(makeLabel("Temperature"));
+        advancedContainer.addView(makeLabel("Temperature"));
         float currentTemp = prefs.getFloat(SettingsDialog.KEY_WHISPER_TEMPERATURE, 0.0f);
         Spinner tempSpinner = makeSpinner(SettingsDialog.TEMPERATURE_LABELS);
         int tempIndex = 0;
@@ -417,12 +451,12 @@ public class SettingsActivity extends Activity {
                         SettingsDialog.TEMPERATURE_VALUES[pos]).apply();
             }
         });
-        body.addView(tempSpinner);
+        advancedContainer.addView(tempSpinner);
 
         // Beam search toggle + beam size spinner
         CheckBox beamToggle = makeCheckBox("Use beam search",
                 prefs.getBoolean(SettingsDialog.KEY_WHISPER_BEAM_SEARCH, false));
-        body.addView(beamToggle);
+        advancedContainer.addView(beamToggle);
 
         LinearLayout beamSizeRow = new LinearLayout(this);
         beamSizeRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -433,7 +467,7 @@ public class SettingsActivity extends Activity {
 
         TextView beamSizeLabel = new TextView(this);
         beamSizeLabel.setText("Beam size: ");
-        beamSizeLabel.setTextColor(Color.WHITE);
+        beamSizeLabel.setTextColor(textColor);
         beamSizeLabel.setTextSize(14);
         beamSizeRow.addView(beamSizeLabel);
 
@@ -451,7 +485,7 @@ public class SettingsActivity extends Activity {
             }
         });
         beamSizeRow.addView(beamSpinner);
-        body.addView(beamSizeRow);
+        advancedContainer.addView(beamSizeRow);
 
         beamToggle.setOnCheckedChangeListener((btn, checked) -> {
             prefs.edit().putBoolean(SettingsDialog.KEY_WHISPER_BEAM_SEARCH, checked).apply();
@@ -466,10 +500,10 @@ public class SettingsActivity extends Activity {
             prefs.edit().putBoolean(SettingsDialog.KEY_WHISPER_SUPPRESS_NON_SPEECH, checked).apply();
             DeviceProfiler.markUserOverride(prefs, SettingsDialog.KEY_WHISPER_SUPPRESS_NON_SPEECH);
         });
-        body.addView(suppressToggle);
+        advancedContainer.addView(suppressToggle);
 
         // Thread count override
-        body.addView(makeLabel("Threads"));
+        advancedContainer.addView(makeLabel("Threads"));
         String[] threadOptions = {"Auto", "1", "2", "3", "4", "5", "6", "7", "8"};
         Spinner threadSpinner = makeSpinner(threadOptions);
         int currentThreads = prefs.getInt(SettingsDialog.KEY_WHISPER_THREAD_OVERRIDE, 0);
@@ -481,7 +515,7 @@ public class SettingsActivity extends Activity {
                 prefs.edit().putInt(SettingsDialog.KEY_WHISPER_THREAD_OVERRIDE, pos).apply();
             }
         });
-        body.addView(threadSpinner);
+        advancedContainer.addView(threadSpinner);
 
         // Proportional audio context
         CheckBox proportionalToggle = makeCheckBox(
@@ -493,7 +527,9 @@ public class SettingsActivity extends Activity {
             DeviceProfiler.markUserOverride(prefs,
                     SettingsDialog.KEY_WHISPER_PROPORTIONAL_CONTEXT);
         });
-        body.addView(proportionalToggle);
+        advancedContainer.addView(proportionalToggle);
+
+        body.addView(advancedContainer);
 
         return body;
     }
@@ -517,8 +553,7 @@ public class SettingsActivity extends Activity {
                 InterfaceTheme selected = themes[pos];
                 if (selected != theme) {
                     InterfaceTheme.save(SettingsActivity.this, selected);
-                    theme = selected;
-                    refreshThemeColors();
+                    recreate();
                 }
             }
         });
@@ -604,8 +639,8 @@ public class SettingsActivity extends Activity {
 
         macroField = new EditText(this);
         macroField.setHint("Macro command (e.g. {ctrl+c})");
-        macroField.setTextColor(Color.WHITE);
-        macroField.setHintTextColor(0xAA999999);
+        macroField.setTextColor(textColor);
+        macroField.setHintTextColor(hintColor);
         macroField.setTextSize(14);
         macroField.setSingleLine(true);
         macroField.setText(prefs.getString(SettingsDialog.KEY_BACK_MACRO, ""));
@@ -625,31 +660,15 @@ public class SettingsActivity extends Activity {
         return body;
     }
 
-    // --- Theme live-update ---
-
-    private void refreshThemeColors() {
-        scrollView.setBackgroundColor(theme.cross);
-
-        // Update title color
-        if (root.getChildCount() > 0) {
-            View titleView = root.getChildAt(0);
-            if (titleView instanceof TextView) {
-                ((TextView) titleView).setTextColor(theme.active);
-            }
-        }
-
-        // Update header colors: model=primary, rest=modifier
-        sectionHeaders[SECTION_MODEL].setTag(theme.primary);
-        sectionHeaders[SECTION_TRANSCRIPTION].setTag(theme.modifier);
-        sectionHeaders[SECTION_INTERFACE].setTag(theme.modifier);
-        sectionHeaders[SECTION_BACK_KEY].setTag(theme.modifier);
-        updateHeaderDrawables();
-
-        // Update section body backgrounds
-        int bodyBg = InterfaceTheme.darkenColor(theme.cross, 0.9f);
-        for (LinearLayout body : sectionBodies) {
-            if (body != null) body.setBackgroundColor(bodyBg);
-        }
+    private void computeDerivedColors() {
+        boolean light = InterfaceTheme.isLightColor(theme.background);
+        surfaceColor = theme.background;
+        bodyColor = light
+                ? InterfaceTheme.darkenColor(theme.background, 0.9f)
+                : InterfaceTheme.lightenColor(theme.background, 1.3f);
+        textColor = light ? 0xFF1A1A1A : Color.WHITE;
+        mutedColor = light ? 0xFF555555 : 0xFFCCCCCC;
+        hintColor = light ? 0x88666666 : 0xAA999999;
     }
 
     // --- Widget factories ---
@@ -658,14 +677,14 @@ public class SettingsActivity extends Activity {
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
         body.setPadding(dp(16), dp(12), dp(16), dp(16));
-        body.setBackgroundColor(InterfaceTheme.darkenColor(theme.cross, 0.9f));
+        body.setBackgroundColor(bodyColor);
         return body;
     }
 
     private TextView makeLabel(String text) {
         TextView label = new TextView(this);
         label.setText(text);
-        label.setTextColor(0xFFCCCCCC);
+        label.setTextColor(mutedColor);
         label.setTextSize(13);
         label.setPadding(0, dp(8), 0, dp(4));
         return label;
@@ -695,7 +714,7 @@ public class SettingsActivity extends Activity {
     private CheckBox makeCheckBox(String text, boolean checked) {
         CheckBox cb = new CheckBox(this);
         cb.setText(text);
-        cb.setTextColor(Color.WHITE);
+        cb.setTextColor(textColor);
         cb.setTextSize(14);
         cb.setChecked(checked);
         return cb;
@@ -709,7 +728,7 @@ public class SettingsActivity extends Activity {
             public View getView(int position, View convertView, ViewGroup parent) {
                 View view = super.getView(position, convertView, parent);
                 if (view instanceof TextView) {
-                    ((TextView) view).setTextColor(Color.WHITE);
+                    ((TextView) view).setTextColor(textColor);
                 }
                 return view;
             }
@@ -718,8 +737,8 @@ public class SettingsActivity extends Activity {
             public View getDropDownView(int position, View convertView, ViewGroup parent) {
                 View view = super.getDropDownView(position, convertView, parent);
                 if (view instanceof TextView) {
-                    ((TextView) view).setTextColor(Color.WHITE);
-                    view.setBackgroundColor(theme.cross);
+                    ((TextView) view).setTextColor(textColor);
+                    view.setBackgroundColor(surfaceColor);
                 }
                 return view;
             }
@@ -732,7 +751,8 @@ public class SettingsActivity extends Activity {
     private Button makeActionButton(String text) {
         Button btn = new Button(this);
         btn.setText(text);
-        btn.setTextColor(Color.WHITE);
+        int btnTextColor = InterfaceTheme.isLightColor(theme.primary) ? 0xFF1A1A1A : Color.WHITE;
+        btn.setTextColor(btnTextColor);
         btn.setAllCaps(false);
         btn.setTextSize(14);
         btn.setTypeface(Typeface.DEFAULT_BOLD);

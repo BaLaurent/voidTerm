@@ -114,6 +114,7 @@ public class SessionListAdapter extends BaseAdapter {
         }
 
         boolean isActive = position == activeIndex;
+        boolean lightBg = InterfaceTheme.isLightColor(theme.drawerBg);
         TerminalSession session = sessions.get(position);
 
         indicator.setText("\u25CF"); // ●
@@ -124,7 +125,13 @@ public class SessionListAdapter extends BaseAdapter {
             sessionName = "Session " + (position + 1);
         }
         name.setText(sessionName);
-        name.setTextColor(isActive ? Color.WHITE : 0xFFBBBBBB);
+        name.setTextColor(isActive
+                ? (lightBg ? 0xFF1A1A1A : Color.WHITE)
+                : (lightBg ? 0xFF666666 : 0xFFBBBBBB));
+
+        closeBtn.setTextColor(lightBg
+                ? InterfaceTheme.darkenColor(theme.drawerAccent, 0.7f)
+                : InterfaceTheme.darkenColor(theme.drawerAccent, 0.5f));
 
         final int idx = position;
         row.setOnClickListener(v -> {
