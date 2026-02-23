@@ -13,13 +13,15 @@ import com.voidterm.contracts.ControlPanel;
 import com.voidterm.contracts.ControlPanelListener;
 
 /**
- * Compact control panel with 3 rows of 6 buttons (128dp total height).
- * Provides all GameBoy panel features in a denser layout.
+ * Compact control panel with 4 rows of 6 buttons (170dp total height).
+ * All 12 macros are visible at once — no paging needed.
  *
- * Row 1 (Modifiers + Tabs): ESC | CTL | SHF | TAB | S-TAB | S-ENT
+ * Row 1 (Modifiers + Tabs): ESC | CTL | TAB | S-TAB | S-ENT | Menu
  * Row 2 (Navigation + Action): Left | Up | Down | Right | Enter | STT
- * Row 3 (Macros + Menu): M1 | M2 | M3 | M4 | PG | Menu
+ * Row 3 (Macros 1-6): M1 | M2 | M3 | M4 | M5 | M6
+ * Row 4 (Macros 7-12): M7 | M8 | M9 | M10 | M11 | M12
  *
+ * No Shift button — dedicated S-TAB and S-ENT buttons cover all shift uses.
  * Uses the same ControlPanelListener interface as GameBoyControlPanel.
  */
 public class CompactPanel extends FrameLayout implements ControlPanel {
@@ -28,14 +30,10 @@ public class CompactPanel extends FrameLayout implements ControlPanel {
 
     private ControlPanelListener listener;
     private boolean ctrlActive;
-    private boolean shiftActive;
     private Button ctrlButton;
-    private Button shiftButton;
 
     private String[][] macros;
-    private final Button[] macroButtons = new Button[4];
-    private int currentMacroPage = 0;
-    private Button macroPageButton;
+    private final Button[] macroButtons = new Button[12];
 
     private final PanelUtils.RepeatState repeatState = new PanelUtils.RepeatState();
 
@@ -73,14 +71,15 @@ public class CompactPanel extends FrameLayout implements ControlPanel {
 
         root.addView(buildRow1(context), rowParams());
         root.addView(buildRow2(context), rowParamsWithTopMargin());
-        root.addView(buildRow3(context), rowParamsWithTopMargin());
+        root.addView(buildMacroRow(context, 0), rowParamsWithTopMargin());
+        root.addView(buildMacroRow(context, 6), rowParamsWithTopMargin());
 
         addView(root, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
     }
 
-    // --- Row 1: ESC | CTL | SHF | TAB | S-TAB | S-ENT ---
+    // --- Row 1: ESC | CTL | TAB | S-TAB | S-ENT | Menu ---
 
     private LinearLayout buildRow1(Context context) {
         LinearLayout row = makeRow(context);
@@ -99,25 +98,9 @@ public class CompactPanel extends FrameLayout implements ControlPanel {
         });
         row.addView(ctrlButton, buttonParams());
 
-        // SHF (sticky toggle)
-        shiftButton = PanelUtils.makeCompactButton(context, "SHF", theme.modifier);
-        shiftButton.setOnClickListener(v -> {
-            if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-            shiftActive = !shiftActive;
-            updateModifierButtonColor(shiftButton, shiftActive);
-        });
-        row.addView(shiftButton, buttonParams());
-
-        // TAB (respects shift for backtab)
+        // TAB
         PanelUtils.addCompactButton(row, context, "TAB", theme.primary, v -> {
-            if (listener != null) {
-                if (shiftActive) {
-                    listener.onSendToTerminal("\033[Z");
-                    resetShift();
-                } else {
-                    listener.onSendToTerminal("\t");
-                }
-            }
+            if (listener != null) listener.onSendToTerminal("\t");
         }, buttonParams(), () -> hapticEnabled);
 
         // S-TAB (backtab)
@@ -128,6 +111,11 @@ public class CompactPanel extends FrameLayout implements ControlPanel {
         // S-ENT (newline without submit)
         PanelUtils.addCompactButton(row, context, "S-\u21B5", theme.modifier, v -> {
             if (listener != null) listener.onSendToTerminal("\n");
+        }, buttonParams(), () -> hapticEnabled);
+
+        // Burger menu (settings)
+        PanelUtils.addCompactButton(row, context, "\u2630", theme.macro, v -> {
+            if (listener != null) listener.onSettingsRequested();
         }, buttonParams(), () -> hapticEnabled);
 
         return row;
@@ -179,77 +167,53 @@ public class CompactPanel extends FrameLayout implements ControlPanel {
         return row;
     }
 
-    // --- Row 3: M1 | M2 | M3 | M4 | PG | Menu ---
+    // --- Macro rows: 6 macros per row ---
 
-    private LinearLayout buildRow3(Context context) {
+    private LinearLayout buildMacroRow(Context context, int startIndex) {
         LinearLayout row = makeRow(context);
 
-        // 4 macro buttons
-        for (int i = 0; i < 4; i++) {
-            int actualIndex = currentMacroPage * MacroStore.PAGE_SIZE + i;
-            Button btn = PanelUtils.makeCompactButton(context, macros[actualIndex][0], theme.macro);
-            final int index = i;
+        for (int i = 0; i < 6; i++) {
+            final int idx = startIndex + i;
+            Button btn = PanelUtils.makeCompactButton(context, macros[idx][0], theme.macro);
             btn.setOnClickListener(v -> {
                 if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
                 if (listener != null) {
-                    int ai = currentMacroPage * MacroStore.PAGE_SIZE + index;
-                    MacroExecutor.execute(macros[ai][1],
+                    MacroExecutor.execute(macros[idx][1],
                             listener::onSendToTerminal, v.getHandler());
                 }
             });
             btn.setOnLongClickListener(v -> {
                 if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
-                int ai = currentMacroPage * MacroStore.PAGE_SIZE + index;
-                MacroEditDialog.show(context, macros[ai][0], macros[ai][1],
+                MacroEditDialog.show(context, macros[idx][0], macros[idx][1],
                         (label, cmd) -> {
-                            int ai2 = currentMacroPage * MacroStore.PAGE_SIZE + index;
-                            macros[ai2][0] = label;
-                            macros[ai2][1] = cmd;
-                            macroButtons[index].setText(label);
+                            macros[idx][0] = label;
+                            macros[idx][1] = cmd;
+                            macroButtons[idx].setText(label);
                             MacroStore.save(context, macros);
                         });
                 return true;
             });
-            macroButtons[i] = btn;
+            macroButtons[idx] = btn;
             row.addView(btn, buttonParams());
         }
-
-        // Page cycle button
-        macroPageButton = PanelUtils.makeCompactButton(context,
-                (currentMacroPage + 1) + "/" + MacroStore.PAGE_COUNT, theme.dpad);
-        macroPageButton.setOnClickListener(v -> {
-            if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-            currentMacroPage = (currentMacroPage + 1) % MacroStore.PAGE_COUNT;
-            updateMacroPage();
-        });
-        row.addView(macroPageButton, buttonParams());
-
-        // Burger menu (settings)
-        PanelUtils.addCompactButton(row, context, "\u2630", theme.macro, v -> {
-            if (listener != null) listener.onSettingsRequested();
-        }, buttonParams(), () -> hapticEnabled);
 
         return row;
     }
 
-    // --- Macro page ---
+    // --- Macro page (all visible, no paging) ---
 
     @Override
     public int getCurrentMacroPage() {
-        return currentMacroPage;
+        return 0;
     }
 
     @Override
     public void setCurrentMacroPage(int page) {
-        if (page >= 0 && page < MacroStore.PAGE_COUNT) {
-            currentMacroPage = page;
-            updateMacroPage();
-        }
-    }
-
-    private void updateMacroPage() {
+        // All macros visible — reload labels in case macros were edited on another panel
         macros = MacroStore.load(getContext());
-        PanelUtils.updateMacroPage(macroButtons, macroPageButton, macros, currentMacroPage);
+        for (int i = 0; i < 12; i++) {
+            macroButtons[i].setText(macros[i][0]);
+        }
     }
 
     @Override
@@ -281,19 +245,17 @@ public class CompactPanel extends FrameLayout implements ControlPanel {
 
     @Override
     public boolean isShiftActive() {
-        return shiftActive;
+        return false;
     }
 
     @Override
     public void setShiftActive(boolean active) {
-        shiftActive = active;
-        updateModifierButtonColor(shiftButton, shiftActive);
+        // No shift button — dedicated S-TAB and S-ENT buttons instead
     }
 
     @Override
     public void resetShift() {
-        shiftActive = false;
-        updateModifierButtonColor(shiftButton, false);
+        // No shift button
     }
 
     // --- Layout helpers ---

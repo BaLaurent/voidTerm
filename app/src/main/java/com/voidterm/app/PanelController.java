@@ -44,13 +44,13 @@ public class PanelController {
         rootLayout.addView(controlPanel, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 2f));
 
-        // Compact panel (hidden by default, 128dp, 3 rows of 6 buttons)
+        // Compact panel (hidden by default, 170dp, 4 rows of 6 buttons)
         compactPanel = new CompactPanel(context);
         compactPanel.setControlPanelListener(listener);
         compactPanel.setVisibility(View.GONE);
         rootLayout.addView(compactPanel, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                PanelUtils.dp(context, 128)));
+                PanelUtils.dp(context, 170)));
 
         // Compact toolbar (hidden by default, 48dp, shown when keyboard visible)
         compactToolbar = new CompactToolbar(context);
