@@ -30,6 +30,7 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 
@@ -190,6 +191,10 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
             String prefix = filesDir + "/usr";
             String home = filesDir + "/home";
 
+            // Ensure libvoidterm-remap.so is available at $PREFIX/lib/ and .bashrc keeps it loaded
+            copyRemapLibrary(prefix);
+            ensureBashrcRemap(home, prefix);
+
             // Select shell: prefer bash > sh fallback
             // NOTE: skip "login" — it's a script with shebang #!/data/data/com.termux/...
             // which points to Termux's package, not ours. Using bash (ELF) directly.
@@ -235,20 +240,94 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
     private String[] buildEnvironment(String prefix, String home) {
         String libDir = prefix + "/lib";
 
-        return new String[]{
-                "TERM=xterm-256color",
-                "COLORTERM=truecolor",
-                "HOME=" + home,
-                "PREFIX=" + prefix,
-                "TERMUX_PREFIX=" + prefix,
-                "TERMUX__PREFIX=" + prefix,
-                "LANG=en_US.UTF-8",
-                "PATH=" + prefix + "/bin:" + prefix + "/bin/applets",
-                "LD_LIBRARY_PATH=" + libDir,
-                "TMPDIR=" + prefix + "/tmp",
-                "SHELL=" + prefix + "/bin/bash",
-                "TERMINFO=" + prefix + "/share/terminfo",
-        };
+        java.util.ArrayList<String> env = new java.util.ArrayList<>();
+        env.add("TERM=xterm-256color");
+        env.add("COLORTERM=truecolor");
+        env.add("HOME=" + home);
+        env.add("PREFIX=" + prefix);
+        env.add("TERMUX_PREFIX=" + prefix);
+        env.add("TERMUX__PREFIX=" + prefix);
+        env.add("LANG=en_US.UTF-8");
+        env.add("PATH=" + prefix + "/bin:" + prefix + "/bin/applets");
+        env.add("LD_LIBRARY_PATH=" + libDir);
+        env.add("TMPDIR=" + prefix + "/tmp");
+        env.add("SHELL=" + prefix + "/bin/bash");
+        env.add("TERMINFO=" + prefix + "/share/terminfo");
+
+        File remapLib = new File(libDir, "libvoidterm-remap.so");
+        if (remapLib.exists()) {
+            env.add("LD_PRELOAD=" + remapLib.getAbsolutePath());
+        } else {
+            Log.w(TAG, "libvoidterm-remap.so not found at " + remapLib.getAbsolutePath()
+                    + ", LD_PRELOAD not set");
+        }
+
+        return env.toArray(new String[0]);
+    }
+
+    /**
+     * Copy libvoidterm-remap.so from the APK's native lib dir to $PREFIX/lib/
+     * so it sits alongside libtermux-exec.so and can be referenced via $PREFIX.
+     */
+    private void copyRemapLibrary(String prefix) {
+        String nativeDir = getApplicationInfo().nativeLibraryDir;
+        File src = new File(nativeDir, "libvoidterm-remap.so");
+        File dstDir = new File(prefix, "lib");
+        File dst = new File(dstDir, "libvoidterm-remap.so");
+        if (!src.exists()) {
+            Log.w(TAG, "libvoidterm-remap.so not found in nativeLibraryDir: " + nativeDir);
+            return;
+        }
+        if (dst.exists() && dst.length() == src.length()) return;
+        dstDir.mkdirs();
+        try (FileInputStream in = new FileInputStream(src);
+             FileOutputStream out = new FileOutputStream(dst)) {
+            byte[] buf = new byte[8192];
+            int len;
+            while ((len = in.read(buf)) > 0) {
+                out.write(buf, 0, len);
+            }
+            dst.setReadable(true, false);
+            dst.setExecutable(true, false);
+            Log.i(TAG, "Copied libvoidterm-remap.so to " + dst.getAbsolutePath());
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to copy libvoidterm-remap.so", e);
+        }
+    }
+
+    /**
+     * Patch an existing .bashrc to re-add libvoidterm-remap.so to LD_PRELOAD.
+     * Termux's $PREFIX/etc/profile overwrites LD_PRELOAD with libtermux-exec.so,
+     * so child processes (like ssh) lose the remap. This snippet appends it back.
+     */
+    private void ensureBashrcRemap(String home, String prefix) {
+        File bashrc = new File(home, ".bashrc");
+        if (!bashrc.exists()) return;
+        try {
+            byte[] bytes = new byte[(int) bashrc.length()];
+            try (FileInputStream fis = new FileInputStream(bashrc)) {
+                int offset = 0;
+                while (offset < bytes.length) {
+                    int read = fis.read(bytes, offset, bytes.length - offset);
+                    if (read < 0) break;
+                    offset += read;
+                }
+            }
+            String content = new String(bytes);
+            if (content.contains("libvoidterm-remap.so")) return;
+            String snippet =
+                    "\n# Ensure VoidTerm path remap stays active after Termux profile overwrites LD_PRELOAD\n" +
+                    "case \"$LD_PRELOAD\" in\n" +
+                    "    *libvoidterm-remap.so*) ;;\n" +
+                    "    *) export LD_PRELOAD=\"${LD_PRELOAD:+$LD_PRELOAD:}$PREFIX/lib/libvoidterm-remap.so\" ;;\n" +
+                    "esac\n";
+            try (FileOutputStream fos = new FileOutputStream(bashrc, true)) {
+                fos.write(snippet.getBytes());
+            }
+            Log.i(TAG, "Patched .bashrc with LD_PRELOAD remap snippet");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to patch .bashrc", e);
+        }
     }
 
     private void initVoiceInput() {

@@ -361,6 +361,61 @@ public class TermuxBootstrapInstaller {
             Os.symlink(filesDir.getParentFile().getAbsolutePath(), termuxCompat.getAbsolutePath());
         }
 
+        // Post-invoke hook: automatically patch newly installed packages.
+        // ELF: perl for binary-safe same-length replacement (skip if no perl).
+        // Text: grep -I (auto-skips binary) + sed. LD_PRELOAD catches misses.
+        File patchScript = new File(usrDir, "lib/voidterm-patch-new.sh");
+        String scriptContent =
+                "#!/data/data/com.voidterm/files/usr/bin/sh\n" +
+                "# Auto-patch newly installed packages: com.termux -> com.voidterm\n" +
+                "# Called by apt via DPkg::Post-Invoke after each install/upgrade.\n" +
+                "INFODIR=\"/data/data/com.voidterm/files/usr/var/lib/dpkg/info\"\n" +
+                "\n" +
+                "patch_file() {\n" +
+                "    f=\"$1\"\n" +
+                "    [ -f \"$f\" ] || return 0\n" +
+                "    [ -s \"$f\" ] || return 0\n" +
+                "    # Read first 4 bytes to detect ELF magic (7f 45 4c 46)\n" +
+                "    magic=$(dd if=\"$f\" bs=1 count=4 2>/dev/null | od -An -tx1 | tr -d ' ')\n" +
+                "    case \"$magic\" in\n" +
+                "    7f454c46)\n" +
+                "        # ELF binary: same-length replacement (16 chars each)\n" +
+                "        # perl -pi handles binary data safely; skip if unavailable\n" +
+                "        command -v perl >/dev/null 2>&1 || return 0\n" +
+                "        perl -pi -e 's|com\\.termux/files|com.voidterm/fil|g;" +
+                "s|com\\.termux/cache|com.voidterm/cac|g' \"$f\" 2>/dev/null\n" +
+                "        ;;\n" +
+                "    *)\n" +
+                "        # grep -I auto-skips binary files (archives, images, .pyc, etc.)\n" +
+                "        grep -Iql 'com\\.termux' \"$f\" 2>/dev/null && \\\n" +
+                "            sed -i 's|com\\.termux|com.voidterm|g' \"$f\" 2>/dev/null\n" +
+                "        ;;\n" +
+                "    esac\n" +
+                "}\n" +
+                "\n" +
+                "# Process .list files modified in the last 2 minutes (just-installed packages)\n" +
+                "for listfile in \"$INFODIR\"/*.list; do\n" +
+                "    [ -f \"$listfile\" ] || continue\n" +
+                "    find \"$listfile\" -mmin -2 2>/dev/null | grep -q . || continue\n" +
+                "    while IFS= read -r filepath; do\n" +
+                "        patch_file \"$filepath\"\n" +
+                "    done < \"$listfile\"\n" +
+                "done\n";
+        fos = new FileOutputStream(patchScript);
+        fos.write(scriptContent.getBytes());
+        fos.close();
+        patchScript.setExecutable(true, false);
+
+        // Always use the FINAL prefix path (not staging) so apt finds the script
+        // after staging dir is renamed to prefix during fresh install.
+        String scriptFinalPath = new File(prefixDir, "lib/voidterm-patch-new.sh").getAbsolutePath();
+        File aptPatchConf = new File(aptConfD, "99-voidterm-patcher.conf");
+        String patchConfig = "DPkg::Post-Invoke { \"sh " + scriptFinalPath +
+                " 2>/dev/null || true\"; };\n";
+        fos = new FileOutputStream(aptPatchConf);
+        fos.write(patchConfig.getBytes());
+        fos.close();
+
         Log.i(TAG, "dpkg configured with instdir: " + dpkgRoot.getAbsolutePath());
     }
 
@@ -405,7 +460,13 @@ public class TermuxBootstrapInstaller {
                     "# Source interactive bash config\n" +
                     "if [ -f \"$PREFIX/etc/bash.bashrc\" ]; then\n" +
                     "    . \"$PREFIX/etc/bash.bashrc\"\n" +
-                    "fi\n";
+                    "fi\n" +
+                    "\n" +
+                    "# Ensure VoidTerm path remap stays active after Termux profile overwrites LD_PRELOAD\n" +
+                    "case \"$LD_PRELOAD\" in\n" +
+                    "    *libvoidterm-remap.so*) ;;\n" +
+                    "    *) export LD_PRELOAD=\"${LD_PRELOAD:+$LD_PRELOAD:}$PREFIX/lib/libvoidterm-remap.so\" ;;\n" +
+                    "esac\n";
             writeTextFile(bashrc, content);
         }
     }
@@ -416,7 +477,7 @@ public class TermuxBootstrapInstaller {
         fos.close();
     }
 
-    private static final int PATCH_VERSION = 9;
+    private static final int PATCH_VERSION = 11;
 
     private static final String TERMUX_OLD_PKG = "com.termux";
     private static final String VOIDTERM_PKG = "com.voidterm";
