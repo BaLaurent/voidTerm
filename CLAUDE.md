@@ -101,7 +101,7 @@ Changes to files in `com.voidterm.contracts` affect the entire voice pipeline. `
 
 `GameBoyControlPanel` provides a touchscreen control panel styled like a Game Boy. Includes D-pad, modifier keys (Ctrl, Shift, Esc), Tab/S-Tab, Enter/S-Enter, macro buttons, and a burger menu button (☰). Communicates with `TermuxActivity` via `ControlPanelListener` interface (`onSendToTerminal`, `onVoiceToggle`, `onSettingsRequested`). Key codes: Enter sends `\r` (submit), S-Enter sends `\n` (newline without submit), TAB sends `\t` (respects SHF state for backtab), S-TAB sends `\033[Z` (backtab).
 
-`CompactPanel` is a 128dp panel with 3 rows of 6 buttons, providing all GameBoy features in a denser format. Row 1 (modifiers): ESC, CTL, SHF, TAB, S-TAB, S-ENT. Row 2 (navigation): ◀, ▲, ▼, ▶, Enter (↵), STT (🎤). Row 3 (macros): M1-M4, page cycle (PG), burger menu (☰). Macros are always visible (no swipe). Same `ControlPanelListener` interface.
+`CompactPanel` is a 170dp panel with 4 rows of 6 buttons, showing all 12 macros at once (no paging). Row 1 (modifiers): ESC, CTL, TAB, S-TAB, S-ENT, burger menu (☰). Row 2 (navigation): ◀, ▲, ▼, ▶, Enter (↵), STT (🎤). Rows 3-4 (macros): M1-M6 and M7-M12. No Shift button — dedicated S-TAB and S-ENT cover all shift uses. `isShiftActive()` always returns false. `setCurrentMacroPage()` reloads macro labels from `MacroStore` for cross-panel sync. Same `ControlPanelListener` interface.
 
 `CompactToolbar` is a 48dp horizontal bar shown above the soft keyboard (or permanently in fullscreen mode). Main row: ESC, CTL, SHF, TAB, arrows (◀▲▼▶), Enter (↵), STT (🎤), burger menu (☰). Swipe left for macro pages (3 pages of 4 buttons). Same `ControlPanelListener` interface as `GameBoyControlPanel`.
 
@@ -235,7 +235,7 @@ Voice pipeline, control panels, and macros all use `getCurrentSession()` which d
 
 ### Panel State Synchronization
 
-All three panels implement the `ControlPanel` interface (`com.voidterm.contracts`), which defines the modifier and macro state API: `isCtrlActive()`, `setCtrlActive(boolean)`, `resetCtrl()`, `isShiftActive()`, `setShiftActive(boolean)`, `resetShift()`, `getCurrentMacroPage()`, `setCurrentMacroPage(int)`. `PanelController.updateVisibility()` syncs state across panel transitions via `showPanel()` helper, which restores modifier/macro state and tracks the `activePanel` reference. CompactPanel and CompactToolbar share button factories (`PanelUtils.makeCompactButton()`, `PanelUtils.makeCompactButtonDrawable()`) — GameBoy keeps its own (different shape system).
+All three panels implement the `ControlPanel` interface (`com.voidterm.contracts`), which defines the modifier and macro state API: `isCtrlActive()`, `setCtrlActive(boolean)`, `resetCtrl()`, `isShiftActive()`, `setShiftActive(boolean)`, `resetShift()`, `getCurrentMacroPage()`, `setCurrentMacroPage(int)`. `PanelController.updateVisibility()` syncs state across panel transitions via `showPanel()` helper, which restores modifier/macro state and tracks the `activePanel` reference. CompactPanel has no shift button — shift methods are no-ops (`isShiftActive()` returns false). CompactPanel shows all 12 macros (no paging) — `getCurrentMacroPage()` returns 0, `setCurrentMacroPage()` reloads macro labels for cross-panel sync. CompactPanel and CompactToolbar share button factories (`PanelUtils.makeCompactButton()`, `PanelUtils.makeCompactButtonDrawable()`) — GameBoy keeps its own (different shape system).
 
 ### SharedPreferences Caching
 
