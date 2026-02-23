@@ -1,6 +1,5 @@
 package com.voidterm.app;
 
-import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
@@ -20,11 +19,11 @@ public class TermuxTerminalSessionClient implements TerminalSessionClient {
 
     private static final String TAG = "TermuxSessionClient";
 
-    private final Activity activity;
+    private final TermuxActivity activity;
     private final DiagnosticLog diagnosticLog;
     private TerminalSession currentSession;
 
-    public TermuxTerminalSessionClient(Activity activity, DiagnosticLog diagnosticLog) {
+    public TermuxTerminalSessionClient(TermuxActivity activity, DiagnosticLog diagnosticLog) {
         this.activity = activity;
         this.diagnosticLog = diagnosticLog;
     }
@@ -65,13 +64,9 @@ public class TermuxTerminalSessionClient implements TerminalSessionClient {
 
     @Override
     public void onTextChanged(@NonNull TerminalSession changedSession) {
-        // Notify the TerminalView to redraw
         activity.runOnUiThread(() -> {
-            if (activity instanceof TermuxActivity) {
-                TermuxActivity ta = (TermuxActivity) activity;
-                if (ta.getTerminalView() != null) {
-                    ta.getTerminalView().onScreenUpdated();
-                }
+            if (activity.getTerminalView() != null) {
+                activity.getTerminalView().onScreenUpdated();
             }
         });
     }
@@ -99,9 +94,7 @@ public class TermuxTerminalSessionClient implements TerminalSessionClient {
 
     @Override
     public void onPasteTextFromClipboard(@Nullable TerminalSession session) {
-        if (activity instanceof TermuxActivity) {
-            ((TermuxActivity) activity).pasteFromClipboard();
-        }
+        activity.pasteFromClipboard();
     }
 
     @Override
@@ -112,11 +105,8 @@ public class TermuxTerminalSessionClient implements TerminalSessionClient {
     @Override
     public void onColorsChanged(@NonNull TerminalSession session) {
         activity.runOnUiThread(() -> {
-            if (activity instanceof TermuxActivity) {
-                TermuxActivity ta = (TermuxActivity) activity;
-                if (ta.getTerminalView() != null) {
-                    ta.getTerminalView().onScreenUpdated();
-                }
+            if (activity.getTerminalView() != null) {
+                activity.getTerminalView().onScreenUpdated();
             }
         });
     }

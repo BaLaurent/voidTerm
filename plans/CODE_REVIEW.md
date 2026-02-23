@@ -422,12 +422,42 @@ Tous les writes utilisent `apply()` (async). Aucun `commit()` bloquant sur le UI
 | ~~Guard `isDestroyed()` dans BootstrapCallback~~ | `TermuxActivity.java` | ✅ |
 | ~~Fix MacroStore : log + graceful handling pour lengths inattendues~~ | `MacroStore.java` | ✅ |
 
-### Phase 4 — Refactoring structurel (quand pret)
+### Phase 4 — Refactoring structurel ✅ COMPLETED
 
-| Action | Fichiers |
-|---|---|
-| Decomposer God Object TermuxActivity (5-6 classes) | `TermuxActivity.java` + nouveaux fichiers |
-| Briser dependencies circulaires avec interfaces/callbacks | Multiple |
-| Extraire code duplique GameBoy/Toolbar si 3eme consumer | `GameBoyControlPanel.java`, `CompactToolbar.java` |
-| Ajouter `-Wall` au CMakeLists.txt | `CMakeLists.txt` |
-| Remplacer `volatile int` par `std::atomic<int>` pour `g_abort_flag` | `whisper_jni.cpp` |
+| Action | Fichiers | Status |
+|---|---|---|
+| ~~Extraire `PanelController` de TermuxActivity (creation, theme, visibilite)~~ | `PanelController.java`, `TermuxActivity.java` | ✅ |
+| ~~Extraire `ControlPanelListener` interface vers contracts~~ | `ControlPanelListener.java`, 3 panels | ✅ |
+| ~~Extraire `PanelUtils` (dp, descriptionForLabel, arrowRepeat, macroPage)~~ | `PanelUtils.java`, 3 panels, LayoutEditMode, MacroEditDialog | ✅ |
+| ~~Decoupler SettingsDialog de TermuxActivity (Runnable callbacks)~~ | `SettingsDialog.java` | ✅ |
+| ~~Typer TermuxTerminalSessionClient avec TermuxActivity~~ | `TermuxTerminalSessionClient.java` | ✅ |
+| ~~Ajouter `-Wall` au CMakeLists.txt~~ | `CMakeLists.txt` | ✅ |
+| ~~Remplacer `volatile int` par `std::atomic<int>` pour `g_abort_flag`~~ | `whisper_jni.cpp` | ✅ |
+
+**Phase 4 Review (23 findings, 14 fixed):**
+
+| Action | Severity | Status |
+|---|---|---|
+| ~~Supprimer import `MotionEvent` inutilise dans GameBoyControlPanel~~ | HIGH | ✅ |
+| ~~Remplacer `"1/3"` hardcode par `MacroStore.PAGE_COUNT`~~ | HIGH | ✅ |
+| ~~Simplifier `applyTheme()` : suppression insertion sort inutile~~ | HIGH | ✅ |
+| ~~Cacher `swipeThresholdPx` dans CompactToolbar (eviter dp() per-ACTION_MOVE)~~ | MEDIUM | ✅ |
+| ~~Deleguer `dp()` vers `PanelUtils.dp()` dans 3 panels~~ | MEDIUM | ✅ |
+| ~~Ajouter Javadoc a `ControlPanelListener` (contracts package)~~ | MEDIUM | ✅ |
+| ~~Ajouter null guard listener dans PanelController~~ | MEDIUM | ✅ |
+| ~~Supprimer TAG inutilise dans GameBoyControlPanel~~ | LOW | ✅ |
+| ~~Fixer commentaire raw string "gameboy" → PANEL_GAMEBOY~~ | LOW | ✅ |
+| ~~Changer RepeatState fields public → package-private~~ | LOW | ✅ |
+| ~~Utiliser `.load()` / `.store()` explicites pour `std::atomic`~~ | LOW | ✅ |
+| Extraire interface commune pour 3 panels (modifier/macro API) | HIGH | Phase 5 |
+| Dedupliquer `updateVisibility()` modifier-sync pattern | HIGH | Phase 5 |
+| Consolider `makeButton`/`makeButtonDrawable` (CompactPanel↔CompactToolbar) | MEDIUM | Phase 5 |
+
+### Phase 5 — Interface commune panels ✅ COMPLETED
+
+| Action | Fichiers | Status |
+|---|---|---|
+| ~~Extraire interface `ControlPanel` (isCtrl, setCtrl, resetCtrl, isShift, setShift, resetShift, getCurrentMacroPage, setCurrentMacroPage)~~ | `ControlPanel.java` (contracts), 3 panels | ✅ |
+| ~~Ajouter `consumeCtrl()`/`consumeShift()` a PanelController~~ | `PanelController.java`, `VoidTermTerminalViewClient.java` | ✅ |
+| ~~Extraire helper `showPanel()` dans PanelController (dedup modifier-sync)~~ | `PanelController.java` | ✅ |
+| ~~Consolider `makeButton`/`makeButtonDrawable` dans PanelUtils~~ | `PanelUtils.java`, `CompactPanel.java`, `CompactToolbar.java` | ✅ |

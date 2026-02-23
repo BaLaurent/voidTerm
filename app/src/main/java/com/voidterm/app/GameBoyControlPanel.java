@@ -9,7 +9,7 @@ import android.graphics.drawable.StateListDrawable;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
-import android.view.MotionEvent;
+
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
@@ -17,6 +17,9 @@ import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.RelativeLayout;
+
+import com.voidterm.contracts.ControlPanel;
+import com.voidterm.contracts.ControlPanelListener;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -34,9 +37,7 @@ import java.util.Map;
  *
  * Supports a custom layout mode where buttons are freely positioned via drag & drop.
  */
-public class GameBoyControlPanel extends FrameLayout {
-
-    private static final String TAG = "GameBoyControlPanel";
+public class GameBoyControlPanel extends FrameLayout implements ControlPanel {
 
     private final InterfaceTheme theme;
     private ControlPanelListener listener;
@@ -53,8 +54,7 @@ public class GameBoyControlPanel extends FrameLayout {
     private final Map<String, View> buttonRegistry = new LinkedHashMap<>();
     private LayoutEditMode editMode;
 
-    private Runnable activeRepeatRunnable;
-    private View activeRepeatView;
+    private final PanelUtils.RepeatState repeatState = new PanelUtils.RepeatState();
 
     private volatile boolean hapticEnabled;
     private final SharedPreferences.OnSharedPreferenceChangeListener hapticListener =
@@ -63,12 +63,6 @@ public class GameBoyControlPanel extends FrameLayout {
                     hapticEnabled = prefs.getBoolean(SettingsDialog.KEY_HAPTIC_FEEDBACK, true);
                 }
             };
-
-    public interface ControlPanelListener {
-        void onSendToTerminal(String text);
-        void onVoiceToggle();
-        void onSettingsRequested();
-    }
 
     public GameBoyControlPanel(Context context) {
         super(context);
@@ -289,7 +283,7 @@ public class GameBoyControlPanel extends FrameLayout {
     }
 
     private Button createPageButton(Context ctx) {
-        pageButton = makeButton(ctx, dp(24), "1/3", 8f, theme.macro, true);
+        pageButton = makeButton(ctx, dp(24), "1/" + MacroStore.PAGE_COUNT, 8f, theme.macro, true);
         pageButton.setPadding(dp(8), 0, dp(8), 0);
         pageButton.setMinWidth(dp(36));
         pageButton.setOnClickListener(v -> {
@@ -375,7 +369,9 @@ public class GameBoyControlPanel extends FrameLayout {
 
     private Button createArrowButton(Context ctx, String name, String label, String escSeq) {
         Button btn = makeButton(ctx, dp(48), label, 14f, theme.dpad, false);
-        setupArrowRepeat(btn, escSeq);
+        PanelUtils.setupArrowRepeat(repeatState, btn, escSeq,
+                text -> { if (listener != null) listener.onSendToTerminal(text); },
+                () -> hapticEnabled);
         buttonRegistry.put(name, btn);
         return btn;
     }
@@ -466,10 +462,7 @@ public class GameBoyControlPanel extends FrameLayout {
     }
 
     private void updateMacroPage() {
-        for (int i = 0; i < MacroStore.PAGE_SIZE; i++) {
-            macroButtons[i].setText(macros[currentPage * MacroStore.PAGE_SIZE + i][0]);
-        }
-        pageButton.setText((currentPage + 1) + "/" + MacroStore.PAGE_COUNT);
+        PanelUtils.updateMacroPage(macroButtons, pageButton, macros, currentPage);
     }
 
     private View buildDpadZone(Context context) {
@@ -543,49 +536,10 @@ public class GameBoyControlPanel extends FrameLayout {
         return dpad;
     }
 
-    private void setupArrowRepeat(Button btn, String escSeq) {
-        btn.setOnTouchListener((v, event) -> {
-            switch (event.getAction()) {
-                case MotionEvent.ACTION_DOWN:
-                    if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-                    if (listener != null) listener.onSendToTerminal(escSeq);
-                    v.setPressed(true);
-                    cancelRepeat();
-                    Runnable repeat = new Runnable() {
-                        @Override
-                        public void run() {
-                            if (v.isPressed()) {
-                                if (listener != null) listener.onSendToTerminal(escSeq);
-                                v.postDelayed(this, 100);
-                            }
-                        }
-                    };
-                    activeRepeatRunnable = repeat;
-                    activeRepeatView = v;
-                    v.postDelayed(repeat, 400);
-                    return true;
-                case MotionEvent.ACTION_UP:
-                case MotionEvent.ACTION_CANCEL:
-                    v.setPressed(false);
-                    cancelRepeat();
-                    return true;
-            }
-            return false;
-        });
-    }
-
-    private void cancelRepeat() {
-        if (activeRepeatRunnable != null && activeRepeatView != null) {
-            activeRepeatView.removeCallbacks(activeRepeatRunnable);
-        }
-        activeRepeatRunnable = null;
-        activeRepeatView = null;
-    }
-
     @Override
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
-        cancelRepeat();
+        PanelUtils.cancelRepeat(repeatState);
         getContext().getSharedPreferences(SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE)
                 .unregisterOnSharedPreferenceChangeListener(hapticListener);
     }
@@ -713,27 +667,8 @@ public class GameBoyControlPanel extends FrameLayout {
         btn.setBackground(makeButtonDrawable(bgColor, size, pill));
 
         btn.setStateListAnimator(null);
-        btn.setContentDescription(descriptionForLabel(label));
+        btn.setContentDescription(PanelUtils.descriptionForLabel(label));
         return btn;
-    }
-
-    private static String descriptionForLabel(String label) {
-        switch (label) {
-            case "\u25B2": return "Up arrow";
-            case "\u25BC": return "Down arrow";
-            case "\u25C0": return "Left arrow";
-            case "\u25B6": return "Right arrow";
-            case "\u21B5": return "Enter";
-            case "\uD83C\uDFA4": return "Voice input";
-            case "\u2630": return "Menu";
-            case "CTL": return "Control modifier";
-            case "SHF": return "Shift modifier";
-            case "ESC": return "Escape";
-            case "TAB": return "Tab";
-            case "S-TAB": return "Shift Tab";
-            case "S-\u21B5": return "Shift Enter";
-            default: return label;
-        }
     }
 
     private StateListDrawable makeButtonDrawable(int bgColor, int size, boolean pill) {
@@ -773,8 +708,7 @@ public class GameBoyControlPanel extends FrameLayout {
     }
 
     private int dp(int value) {
-        return (int) TypedValue.applyDimension(
-                TypedValue.COMPLEX_UNIT_DIP, value, getResources().getDisplayMetrics());
+        return PanelUtils.dp(getContext(), value);
     }
 
 }

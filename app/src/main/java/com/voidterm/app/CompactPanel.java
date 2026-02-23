@@ -2,19 +2,15 @@ package com.voidterm.app;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.graphics.Color;
-import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
-import android.graphics.drawable.StateListDrawable;
-import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
-import android.view.MotionEvent;
-import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+
+import com.voidterm.contracts.ControlPanel;
+import com.voidterm.contracts.ControlPanelListener;
 
 /**
  * Compact control panel with 3 rows of 6 buttons (128dp total height).
@@ -26,11 +22,11 @@ import android.widget.LinearLayout;
  *
  * Uses the same ControlPanelListener interface as GameBoyControlPanel.
  */
-public class CompactPanel extends FrameLayout {
+public class CompactPanel extends FrameLayout implements ControlPanel {
 
     private final InterfaceTheme theme;
 
-    private GameBoyControlPanel.ControlPanelListener listener;
+    private ControlPanelListener listener;
     private boolean ctrlActive;
     private boolean shiftActive;
     private Button ctrlButton;
@@ -41,8 +37,7 @@ public class CompactPanel extends FrameLayout {
     private int currentMacroPage = 0;
     private Button macroPageButton;
 
-    private Runnable activeRepeatRunnable;
-    private View activeRepeatView;
+    private final PanelUtils.RepeatState repeatState = new PanelUtils.RepeatState();
 
     private volatile boolean hapticEnabled;
     private final SharedPreferences.OnSharedPreferenceChangeListener hapticListener =
@@ -66,7 +61,7 @@ public class CompactPanel extends FrameLayout {
         buildLayout(context);
     }
 
-    public void setControlPanelListener(GameBoyControlPanel.ControlPanelListener listener) {
+    public void setControlPanelListener(ControlPanelListener listener) {
         this.listener = listener;
     }
 
@@ -91,12 +86,12 @@ public class CompactPanel extends FrameLayout {
         LinearLayout row = makeRow(context);
 
         // ESC
-        addButton(row, context, "ESC", theme.modifier, v -> {
+        PanelUtils.addCompactButton(row, context, "ESC", theme.modifier, v -> {
             if (listener != null) listener.onSendToTerminal("\033");
-        });
+        }, buttonParams(), () -> hapticEnabled);
 
         // CTL (sticky toggle)
-        ctrlButton = makeButton(context, "CTL", theme.modifier);
+        ctrlButton = PanelUtils.makeCompactButton(context, "CTL", theme.modifier);
         ctrlButton.setOnClickListener(v -> {
             if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             ctrlActive = !ctrlActive;
@@ -105,7 +100,7 @@ public class CompactPanel extends FrameLayout {
         row.addView(ctrlButton, buttonParams());
 
         // SHF (sticky toggle)
-        shiftButton = makeButton(context, "SHF", theme.modifier);
+        shiftButton = PanelUtils.makeCompactButton(context, "SHF", theme.modifier);
         shiftButton.setOnClickListener(v -> {
             if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             shiftActive = !shiftActive;
@@ -114,7 +109,7 @@ public class CompactPanel extends FrameLayout {
         row.addView(shiftButton, buttonParams());
 
         // TAB (respects shift for backtab)
-        addButton(row, context, "TAB", theme.primary, v -> {
+        PanelUtils.addCompactButton(row, context, "TAB", theme.primary, v -> {
             if (listener != null) {
                 if (shiftActive) {
                     listener.onSendToTerminal("\033[Z");
@@ -123,17 +118,17 @@ public class CompactPanel extends FrameLayout {
                     listener.onSendToTerminal("\t");
                 }
             }
-        });
+        }, buttonParams(), () -> hapticEnabled);
 
         // S-TAB (backtab)
-        addButton(row, context, "S-TAB", theme.modifier, v -> {
+        PanelUtils.addCompactButton(row, context, "S-TAB", theme.modifier, v -> {
             if (listener != null) listener.onSendToTerminal("\033[Z");
-        });
+        }, buttonParams(), () -> hapticEnabled);
 
         // S-ENT (newline without submit)
-        addButton(row, context, "S-\u21B5", theme.modifier, v -> {
+        PanelUtils.addCompactButton(row, context, "S-\u21B5", theme.modifier, v -> {
             if (listener != null) listener.onSendToTerminal("\n");
-        });
+        }, buttonParams(), () -> hapticEnabled);
 
         return row;
     }
@@ -144,34 +139,42 @@ public class CompactPanel extends FrameLayout {
         LinearLayout row = makeRow(context);
 
         // Left arrow (with repeat)
-        Button left = makeButton(context, "\u25C0", theme.dpad);
-        setupArrowRepeat(left, "\033[D");
+        Button left = PanelUtils.makeCompactButton(context, "\u25C0", theme.dpad);
+        PanelUtils.setupArrowRepeat(repeatState, left, "\033[D",
+                text -> { if (listener != null) listener.onSendToTerminal(text); },
+                () -> hapticEnabled);
         row.addView(left, buttonParams());
 
         // Up arrow (with repeat)
-        Button up = makeButton(context, "\u25B2", theme.dpad);
-        setupArrowRepeat(up, "\033[A");
+        Button up = PanelUtils.makeCompactButton(context, "\u25B2", theme.dpad);
+        PanelUtils.setupArrowRepeat(repeatState, up, "\033[A",
+                text -> { if (listener != null) listener.onSendToTerminal(text); },
+                () -> hapticEnabled);
         row.addView(up, buttonParams());
 
         // Down arrow (with repeat)
-        Button down = makeButton(context, "\u25BC", theme.dpad);
-        setupArrowRepeat(down, "\033[B");
+        Button down = PanelUtils.makeCompactButton(context, "\u25BC", theme.dpad);
+        PanelUtils.setupArrowRepeat(repeatState, down, "\033[B",
+                text -> { if (listener != null) listener.onSendToTerminal(text); },
+                () -> hapticEnabled);
         row.addView(down, buttonParams());
 
         // Right arrow (with repeat)
-        Button right = makeButton(context, "\u25B6", theme.dpad);
-        setupArrowRepeat(right, "\033[C");
+        Button right = PanelUtils.makeCompactButton(context, "\u25B6", theme.dpad);
+        PanelUtils.setupArrowRepeat(repeatState, right, "\033[C",
+                text -> { if (listener != null) listener.onSendToTerminal(text); },
+                () -> hapticEnabled);
         row.addView(right, buttonParams());
 
         // Enter
-        addButton(row, context, "\u21B5", theme.primary, v -> {
+        PanelUtils.addCompactButton(row, context, "\u21B5", theme.primary, v -> {
             if (listener != null) listener.onSendToTerminal("\r");
-        });
+        }, buttonParams(), () -> hapticEnabled);
 
         // STT (voice)
-        addButton(row, context, "\uD83C\uDFA4", theme.dpad, v -> {
+        PanelUtils.addCompactButton(row, context, "\uD83C\uDFA4", theme.dpad, v -> {
             if (listener != null) listener.onVoiceToggle();
-        });
+        }, buttonParams(), () -> hapticEnabled);
 
         return row;
     }
@@ -184,7 +187,7 @@ public class CompactPanel extends FrameLayout {
         // 4 macro buttons
         for (int i = 0; i < 4; i++) {
             int actualIndex = currentMacroPage * MacroStore.PAGE_SIZE + i;
-            Button btn = makeButton(context, macros[actualIndex][0], theme.macro);
+            Button btn = PanelUtils.makeCompactButton(context, macros[actualIndex][0], theme.macro);
             final int index = i;
             btn.setOnClickListener(v -> {
                 if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
@@ -212,7 +215,7 @@ public class CompactPanel extends FrameLayout {
         }
 
         // Page cycle button
-        macroPageButton = makeButton(context,
+        macroPageButton = PanelUtils.makeCompactButton(context,
                 (currentMacroPage + 1) + "/" + MacroStore.PAGE_COUNT, theme.dpad);
         macroPageButton.setOnClickListener(v -> {
             if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
@@ -222,19 +225,21 @@ public class CompactPanel extends FrameLayout {
         row.addView(macroPageButton, buttonParams());
 
         // Burger menu (settings)
-        addButton(row, context, "\u2630", theme.macro, v -> {
+        PanelUtils.addCompactButton(row, context, "\u2630", theme.macro, v -> {
             if (listener != null) listener.onSettingsRequested();
-        });
+        }, buttonParams(), () -> hapticEnabled);
 
         return row;
     }
 
     // --- Macro page ---
 
+    @Override
     public int getCurrentMacroPage() {
         return currentMacroPage;
     }
 
+    @Override
     public void setCurrentMacroPage(int page) {
         if (page >= 0 && page < MacroStore.PAGE_COUNT) {
             currentMacroPage = page;
@@ -244,92 +249,54 @@ public class CompactPanel extends FrameLayout {
 
     private void updateMacroPage() {
         macros = MacroStore.load(getContext());
-        for (int i = 0; i < MacroStore.PAGE_SIZE; i++) {
-            macroButtons[i].setText(macros[currentMacroPage * MacroStore.PAGE_SIZE + i][0]);
-        }
-        macroPageButton.setText((currentMacroPage + 1) + "/" + MacroStore.PAGE_COUNT);
-    }
-
-    // --- Arrow repeat ---
-
-    private void setupArrowRepeat(Button btn, String escSeq) {
-        btn.setOnTouchListener((v, event) -> {
-            switch (event.getAction()) {
-                case MotionEvent.ACTION_DOWN:
-                    if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-                    if (listener != null) listener.onSendToTerminal(escSeq);
-                    v.setPressed(true);
-                    cancelRepeat();
-                    Runnable repeat = new Runnable() {
-                        @Override
-                        public void run() {
-                            if (v.isPressed()) {
-                                if (listener != null) listener.onSendToTerminal(escSeq);
-                                v.postDelayed(this, 100);
-                            }
-                        }
-                    };
-                    activeRepeatRunnable = repeat;
-                    activeRepeatView = v;
-                    v.postDelayed(repeat, 400);
-                    return true;
-                case MotionEvent.ACTION_UP:
-                case MotionEvent.ACTION_CANCEL:
-                    v.setPressed(false);
-                    cancelRepeat();
-                    return true;
-            }
-            return false;
-        });
-    }
-
-    private void cancelRepeat() {
-        if (activeRepeatRunnable != null && activeRepeatView != null) {
-            activeRepeatView.removeCallbacks(activeRepeatRunnable);
-        }
-        activeRepeatRunnable = null;
-        activeRepeatView = null;
+        PanelUtils.updateMacroPage(macroButtons, macroPageButton, macros, currentMacroPage);
     }
 
     @Override
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
-        cancelRepeat();
+        PanelUtils.cancelRepeat(repeatState);
         getContext().getSharedPreferences(SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE)
                 .unregisterOnSharedPreferenceChangeListener(hapticListener);
     }
 
     // --- Modifier state API ---
 
+    @Override
     public boolean isCtrlActive() {
         return ctrlActive;
     }
 
+    @Override
     public void setCtrlActive(boolean active) {
         ctrlActive = active;
         updateModifierButtonColor(ctrlButton, ctrlActive);
     }
 
+    @Override
     public void resetCtrl() {
         ctrlActive = false;
         updateModifierButtonColor(ctrlButton, false);
     }
 
+    @Override
     public boolean isShiftActive() {
         return shiftActive;
     }
 
+    @Override
     public void setShiftActive(boolean active) {
         shiftActive = active;
         updateModifierButtonColor(shiftButton, shiftActive);
     }
 
+    @Override
     public void resetShift() {
         shiftActive = false;
         updateModifierButtonColor(shiftButton, false);
     }
 
-    // --- Button helpers ---
+    // --- Layout helpers ---
 
     private LinearLayout makeRow(Context context) {
         LinearLayout row = new LinearLayout(context);
@@ -350,16 +317,6 @@ public class CompactPanel extends FrameLayout {
         return lp;
     }
 
-    private void addButton(LinearLayout row, Context context, String label, int color,
-                           OnClickListener click) {
-        Button btn = makeButton(context, label, color);
-        btn.setOnClickListener(v -> {
-            if (hapticEnabled) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
-            click.onClick(v);
-        });
-        row.addView(btn, buttonParams());
-    }
-
     private LinearLayout.LayoutParams buttonParams() {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
@@ -367,73 +324,12 @@ public class CompactPanel extends FrameLayout {
         return lp;
     }
 
-    private Button makeButton(Context ctx, String label, int bgColor) {
-        Button btn = new Button(ctx);
-        btn.setText(label);
-        btn.setTextColor(Color.WHITE);
-        btn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
-        btn.setTypeface(Typeface.DEFAULT_BOLD);
-        btn.setAllCaps(false);
-        btn.setGravity(Gravity.CENTER);
-        btn.setPadding(0, 0, 0, 0);
-        btn.setMinWidth(0);
-        btn.setMinHeight(0);
-        btn.setMinimumWidth(0);
-        btn.setMinimumHeight(0);
-        btn.setBackground(makeButtonDrawable(bgColor));
-        btn.setStateListAnimator(null);
-        btn.setContentDescription(descriptionForLabel(label));
-        return btn;
-    }
-
-    private static String descriptionForLabel(String label) {
-        switch (label) {
-            case "\u25B2": return "Up arrow";
-            case "\u25BC": return "Down arrow";
-            case "\u25C0": return "Left arrow";
-            case "\u25B6": return "Right arrow";
-            case "\u21B5": return "Enter";
-            case "\uD83C\uDFA4": return "Voice input";
-            case "\u2630": return "Menu";
-            case "CTL": return "Control modifier";
-            case "SHF": return "Shift modifier";
-            case "ESC": return "Escape";
-            case "TAB": return "Tab";
-            case "S-TAB": return "Shift Tab";
-            case "S-\u21B5": return "Shift Enter";
-            default: return label;
-        }
-    }
-
-    private StateListDrawable makeButtonDrawable(int bgColor) {
-        GradientDrawable normal = new GradientDrawable();
-        normal.setShape(GradientDrawable.RECTANGLE);
-        normal.setCornerRadius(dp(6));
-        normal.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM);
-        normal.setColors(new int[]{InterfaceTheme.lightenColor(bgColor, 1.4f),
-                InterfaceTheme.darkenColor(bgColor, 0.85f)});
-        normal.setStroke(dp(1), InterfaceTheme.darkenColor(bgColor, 0.55f));
-
-        GradientDrawable pressed = new GradientDrawable();
-        pressed.setShape(GradientDrawable.RECTANGLE);
-        pressed.setCornerRadius(dp(6));
-        pressed.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM);
-        pressed.setColors(new int[]{InterfaceTheme.darkenColor(bgColor, 0.6f),
-                InterfaceTheme.darkenColor(bgColor, 0.8f)});
-        pressed.setStroke(dp(1), InterfaceTheme.darkenColor(bgColor, 0.4f));
-
-        StateListDrawable stateList = new StateListDrawable();
-        stateList.addState(new int[]{android.R.attr.state_pressed}, pressed);
-        stateList.addState(new int[]{}, normal);
-        return stateList;
-    }
-
     private void updateModifierButtonColor(Button btn, boolean active) {
-        btn.setBackground(makeButtonDrawable(active ? theme.active : theme.modifier));
+        btn.setBackground(PanelUtils.makeCompactButtonDrawable(getContext(),
+                active ? theme.active : theme.modifier));
     }
 
     private int dp(int value) {
-        return (int) TypedValue.applyDimension(
-                TypedValue.COMPLEX_UNIT_DIP, value, getResources().getDisplayMetrics());
+        return PanelUtils.dp(getContext(), value);
     }
 }

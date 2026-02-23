@@ -35,6 +35,7 @@ import java.io.InputStream;
 
 import com.termux.terminal.TerminalSession;
 import com.termux.view.TerminalView;
+import com.voidterm.contracts.ControlPanelListener;
 import com.voidterm.contracts.VoiceInputCallback;
 import com.voidterm.contracts.VoiceState;
 import com.voidterm.input.QuestInputHandler;
@@ -46,7 +47,7 @@ import com.voidterm.voice.VoiceInputManager;
  * with voice input and Quest controller support.
  */
 public class TermuxActivity extends Activity implements VoiceInputCallback,
-        GameBoyControlPanel.ControlPanelListener {
+        ControlPanelListener {
 
     private static final String TAG = "TermuxActivity";
 
@@ -60,9 +61,7 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
     private QuestInputHandler questInputHandler;
     private TranscriptionOverlay transcriptionOverlay;
     private ExtraKeysConfig extraKeysConfig;
-    private GameBoyControlPanel controlPanel;
-    private CompactPanel compactPanel;
-    private CompactToolbar compactToolbar;
+    private PanelController panelController;
     private boolean keyboardVisible = false;
     private ViewTreeObserver.OnGlobalLayoutListener layoutListener;
     private final Rect visibleDisplayRect = new Rect();
@@ -133,30 +132,8 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         rootLayout.addView(screenFrame, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 3f));
 
-        // GameBoy control panel (weight=2, ~40%)
-        controlPanel = new GameBoyControlPanel(this);
-        controlPanel.setControlPanelListener(this);
-        controlPanel.setBackgroundColor(InterfaceTheme.current(this).background);
-        rootLayout.addView(controlPanel, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 2f));
-
-        // Compact panel (hidden by default, 128dp, 3 rows of 6 buttons)
-        compactPanel = new CompactPanel(this);
-        compactPanel.setControlPanelListener(this);
-        compactPanel.setVisibility(View.GONE);
-        rootLayout.addView(compactPanel, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 128,
-                        getResources().getDisplayMetrics())));
-
-        // Compact toolbar (hidden by default, shown when keyboard is visible)
-        compactToolbar = new CompactToolbar(this);
-        compactToolbar.setControlPanelListener(this);
-        compactToolbar.setVisibility(View.GONE);
-        rootLayout.addView(compactToolbar, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 48,
-                        getResources().getDisplayMetrics())));
+        // Control panels (GameBoy, Compact, CompactToolbar)
+        panelController = new PanelController(this, rootLayout, this);
 
         setContentView(rootLayout);
 
@@ -372,9 +349,7 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
 
         // Hide screen and controls while installing
         screenFrame.setVisibility(android.view.View.GONE);
-        controlPanel.setVisibility(android.view.View.GONE);
-        compactPanel.setVisibility(android.view.View.GONE);
-        compactToolbar.setVisibility(android.view.View.GONE);
+        panelController.hideAll();
     }
 
     private void updateInstallProgress(String message, int percent) {
@@ -511,7 +486,9 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
 
     @Override
     public void onSettingsRequested() {
-        new SettingsDialog(this, this::reloadCurrentModel, () -> controlPanel.enterEditMode()).show();
+        new SettingsDialog(this, this::reloadCurrentModel,
+                () -> panelController.getControlPanel().enterEditMode(),
+                this::applyTheme, this::updatePanelVisibility).show();
     }
 
     @Override
@@ -611,22 +588,21 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
     }
 
     /**
-     * Get the control panel (used by view client for modifier key state).
+     * Get the control panel (used for edit mode entry from SettingsDialog).
      */
     public GameBoyControlPanel getControlPanel() {
-        return controlPanel;
+        return panelController.getControlPanel();
+    }
+
+    /**
+     * Get the panel controller (used by view client for modifier key consumption).
+     */
+    public PanelController getPanelController() {
+        return panelController;
     }
 
     public boolean isKeyboardVisible() {
         return keyboardVisible;
-    }
-
-    public CompactPanel getCompactPanel() {
-        return compactPanel;
-    }
-
-    public CompactToolbar getCompactToolbar() {
-        return compactToolbar;
     }
 
     /**
@@ -634,66 +610,7 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
      * Called from SettingsDialog after theme selection changes.
      */
     public void applyTheme() {
-        // Save layout params and positions
-        int controlPanelIndex = rootLayout.indexOfChild(controlPanel);
-        LinearLayout.LayoutParams controlPanelLp =
-                (LinearLayout.LayoutParams) controlPanel.getLayoutParams();
-
-        int compactPanelIndex = rootLayout.indexOfChild(compactPanel);
-        LinearLayout.LayoutParams compactPanelLp =
-                (LinearLayout.LayoutParams) compactPanel.getLayoutParams();
-
-        int compactToolbarIndex = rootLayout.indexOfChild(compactToolbar);
-        LinearLayout.LayoutParams compactToolbarLp =
-                (LinearLayout.LayoutParams) compactToolbar.getLayoutParams();
-
-        // Remove old panels
-        rootLayout.removeView(controlPanel);
-        rootLayout.removeView(compactPanel);
-        rootLayout.removeView(compactToolbar);
-
-        // Recreate (constructors read the current theme)
-        controlPanel = new GameBoyControlPanel(this);
-        controlPanel.setControlPanelListener(this);
-        controlPanel.setBackgroundColor(InterfaceTheme.current(this).background);
-        controlPanel.setVisibility(View.GONE);
-
-        compactPanel = new CompactPanel(this);
-        compactPanel.setControlPanelListener(this);
-        compactPanel.setVisibility(View.GONE);
-
-        compactToolbar = new CompactToolbar(this);
-        compactToolbar.setControlPanelListener(this);
-        compactToolbar.setVisibility(View.GONE);
-
-        // Re-insert at original positions (sorted ascending)
-        int[] indices = {controlPanelIndex, compactPanelIndex, compactToolbarIndex};
-        View[] views = {controlPanel, compactPanel, compactToolbar};
-        LinearLayout.LayoutParams[] params = {controlPanelLp, compactPanelLp, compactToolbarLp};
-
-        // Simple insertion sort by index
-        for (int i = 1; i < 3; i++) {
-            int idx = indices[i];
-            View v = views[i];
-            LinearLayout.LayoutParams p = params[i];
-            int j = i - 1;
-            while (j >= 0 && indices[j] > idx) {
-                indices[j + 1] = indices[j];
-                views[j + 1] = views[j];
-                params[j + 1] = params[j];
-                j--;
-            }
-            indices[j + 1] = idx;
-            views[j + 1] = v;
-            params[j + 1] = p;
-        }
-
-        int insertBase = indices[0];
-        for (int i = 0; i < 3; i++) {
-            rootLayout.addView(views[i], insertBase + i, params[i]);
-        }
-
-        // Restore correct visibility via updatePanelVisibility
+        panelController.applyTheme(this);
         updatePanelVisibility();
     }
 
@@ -703,77 +620,10 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
 
     /**
      * Set correct panel visibility based on panel mode, toolbar preference,
-     * and keyboard state. Called from keyboard listener, settings changes,
-     * and after bootstrap install.
-     *
-     * Panel modes:
-     * - "gameboy": GameBoy panel (default), CompactToolbar when keyboard visible
-     * - "compact": CompactPanel, CompactToolbar when keyboard visible
-     * - "fullscreen": CompactToolbar only (always visible)
+     * and keyboard state. Delegates to PanelController.
      */
     public void updatePanelVisibility() {
-        SharedPreferences prefs = getSharedPreferences(SettingsDialog.PREFS_NAME, MODE_PRIVATE);
-        String panelMode = SettingsDialog.migratePanelMode(prefs);
-
-        // Collect modifier/macro state from whichever panel is currently visible
-        boolean ctrl = false, shift = false;
-        int macroPage = 0;
-        if (controlPanel.getVisibility() == View.VISIBLE) {
-            ctrl = controlPanel.isCtrlActive();
-            shift = controlPanel.isShiftActive();
-            macroPage = controlPanel.getCurrentMacroPage();
-        } else if (compactPanel.getVisibility() == View.VISIBLE) {
-            ctrl = compactPanel.isCtrlActive();
-            shift = compactPanel.isShiftActive();
-            macroPage = compactPanel.getCurrentMacroPage();
-        } else if (compactToolbar.getVisibility() == View.VISIBLE) {
-            ctrl = compactToolbar.isCtrlActive();
-            shift = compactToolbar.isShiftActive();
-            macroPage = compactToolbar.getCurrentMacroPage();
-        }
-
-        // Hide all panels first
-        controlPanel.setVisibility(View.GONE);
-        compactPanel.setVisibility(View.GONE);
-        compactToolbar.setVisibility(View.GONE);
-
-        if (SettingsDialog.PANEL_FULLSCREEN.equals(panelMode)) {
-            compactToolbar.setVisibility(View.VISIBLE);
-            compactToolbar.setCtrlActive(ctrl);
-            compactToolbar.setShiftActive(shift);
-            compactToolbar.setCurrentMacroPage(macroPage);
-            return;
-        }
-
-        boolean toolbarEnabled = prefs.getBoolean(SettingsDialog.KEY_COMPACT_TOOLBAR, true);
-
-        if (SettingsDialog.PANEL_COMPACT.equals(panelMode)) {
-            if (keyboardVisible && toolbarEnabled) {
-                compactToolbar.setVisibility(View.VISIBLE);
-                compactToolbar.setCtrlActive(ctrl);
-                compactToolbar.setShiftActive(shift);
-                compactToolbar.setCurrentMacroPage(macroPage);
-            } else {
-                compactPanel.setVisibility(View.VISIBLE);
-                compactPanel.setCtrlActive(ctrl);
-                compactPanel.setShiftActive(shift);
-                compactPanel.setCurrentMacroPage(macroPage);
-            }
-            return;
-        }
-
-        // Default: "gameboy"
-        if (keyboardVisible && toolbarEnabled) {
-            compactToolbar.setVisibility(View.VISIBLE);
-            compactToolbar.setCtrlActive(ctrl);
-            compactToolbar.setShiftActive(shift);
-            compactToolbar.setCurrentMacroPage(macroPage);
-        } else {
-            controlPanel.setVisibility(View.VISIBLE);
-            controlPanel.setCtrlActive(ctrl);
-            controlPanel.setShiftActive(shift);
-            controlPanel.setCurrentMacroPage(macroPage);
-        }
+        panelController.updateVisibility(keyboardVisible);
     }
 
     // --- Context menu ("More" button) ---

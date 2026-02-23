@@ -50,7 +50,7 @@ User confirms (Enter) → VoiceInputCallback.onVoiceTextReady() → Terminal PTY
 
 | Package | Role |
 |---|---|
-| `com.voidterm.contracts` | Shared interfaces: `VoiceState`, `VoiceInputCallback`, `TranscriptionListener` |
+| `com.voidterm.contracts` | Shared interfaces: `VoiceState`, `VoiceInputCallback`, `TranscriptionListener`, `ControlPanel`, `ControlPanelListener` |
 | `com.voidterm.voice` | Voice system: `VoiceInputManager`, `AudioCapture`, `WhisperBridge`, `TranscriptionOverlay` |
 | `com.voidterm.input` | Controller mapping: `QuestInputHandler` |
 | `com.voidterm.app` | Activity, UI, styling: `TermuxActivity`, `GameBoyControlPanel`, `CompactToolbar`, `MacroExecutor`, `MacroEditDialog`, `TerminalStyleDialog`, `SettingsDialog`, `ExtraKeysConfig` |
@@ -168,7 +168,7 @@ Haptic feedback on button presses is toggled via checkbox in `SettingsDialog` In
 
 ### Panel Mode
 
-Panel mode is selected via a Spinner in `SettingsDialog` Interface section. Three modes: "GameBoy Panel" (`gameboy`, default), "Compact Panel" (`compact`), "Fullscreen (toolbar only)" (`fullscreen`). Persisted in `SharedPreferences` ("voidterm_settings" / "panel_mode"). In fullscreen mode, the "Compact toolbar above keyboard" checkbox is disabled (toolbar is forced on). The "Customize Layout" button is disabled when not in GameBoy mode. Panel visibility is centralized in `TermuxActivity.updatePanelVisibility()`, called from keyboard listener, settings changes, bootstrap completion, and initial layout. `VoidTermTerminalViewClient.readControlKey()`/`readShiftKey()` check actual panel visibility (CompactToolbar → CompactPanel → GameBoyControlPanel) to correctly read modifier keys in all modes.
+Panel mode is selected via a Spinner in `SettingsDialog` Interface section. Three modes: "GameBoy Panel" (`gameboy`, default), "Compact Panel" (`compact`), "Fullscreen (toolbar only)" (`fullscreen`). Persisted in `SharedPreferences` ("voidterm_settings" / "panel_mode"). In fullscreen mode, the "Compact toolbar above keyboard" checkbox is disabled (toolbar is forced on). The "Customize Layout" button is disabled when not in GameBoy mode. Panel visibility is centralized in `PanelController.updateVisibility()`, which tracks the active panel via an `activePanel` field (type `ControlPanel`). `VoidTermTerminalViewClient.readControlKey()`/`readShiftKey()` delegate to `PanelController.consumeCtrl()`/`consumeShift()` for O(1) modifier consumption from the active panel.
 
 ### Tap-to-Toggle Keyboard
 
@@ -193,7 +193,7 @@ Bootstrap callbacks in `TermuxActivity` guard with `if (isDestroyed()) return;` 
 
 ### Panel State Synchronization
 
-Modifier keys (Ctrl/Shift) and macro page index are synced bidirectionally between `GameBoyControlPanel` and `CompactToolbar` in `TermuxActivity.updatePanelVisibility()`. Both panels expose `setCtrlActive(boolean)`, `setShiftActive(boolean)`, `getCurrentMacroPage()`, and `setCurrentMacroPage(int)`.
+All three panels implement the `ControlPanel` interface (`com.voidterm.contracts`), which defines the modifier and macro state API: `isCtrlActive()`, `setCtrlActive(boolean)`, `resetCtrl()`, `isShiftActive()`, `setShiftActive(boolean)`, `resetShift()`, `getCurrentMacroPage()`, `setCurrentMacroPage(int)`. `PanelController.updateVisibility()` syncs state across panel transitions via `showPanel()` helper, which restores modifier/macro state and tracks the `activePanel` reference. CompactPanel and CompactToolbar share button factories (`PanelUtils.makeCompactButton()`, `PanelUtils.makeCompactButtonDrawable()`) — GameBoy keeps its own (different shape system).
 
 ### SharedPreferences Caching
 
@@ -205,7 +205,7 @@ All preference keys for `voidterm_settings` are centralized as `public static fi
 
 ## Code Review & Remediation
 
-`plans/CODE_REVIEW.md` documents 61 findings from a 5-agent parallel code review (concurrency, JNI, UI, architecture, config). Phases 1-3 completed (22 findings fixed). Phase 4 (refactoring structurel) pending. Completion reports in `plans/completed/`.
+`plans/CODE_REVIEW.md` documents 61 findings from a 5-agent parallel code review (concurrency, JNI, UI, architecture, config). Phases 1-4 completed (36 findings fixed). Phase 5 (interface commune panels) completed. Completion reports in `plans/completed/`.
 
 ## Code Style
 

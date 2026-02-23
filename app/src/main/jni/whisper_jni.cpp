@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <cmath>
+#include <atomic>
 #include <android/log.h>
 #include "whisper.h"
 #include "ggml-backend.h"
@@ -12,10 +13,10 @@
 
 // Abort flag for cooperative cancellation of whisper_full() via ggml_abort_callback.
 // Set by nativeAbort(), checked before each ggml computation, reset at transcription start.
-static volatile int g_abort_flag = 0;
+static std::atomic<int> g_abort_flag(0);
 
 static bool whisper_abort_callback(void * /*user_data*/) {
-    if (g_abort_flag != 0) {
+    if (g_abort_flag.load() != 0) {
         LOGI("abort_callback returning true — stopping whisper_full()");
         return true;
     }
@@ -48,7 +49,7 @@ static void streaming_segment_callback(struct whisper_context *ctx,
     if (!data || !data->env || !data->bridgeRef) return;
 
     // Abort flag check — don't call back into Java if we're aborting
-    if (g_abort_flag != 0) return;
+    if (g_abort_flag.load() != 0) return;
 
     int total = whisper_full_n_segments(ctx);
     // Append only the new segments since last callback
@@ -154,7 +155,7 @@ Java_com_voidterm_voice_WhisperBridge_nativeTranscribe(JNIEnv *env, jobject thiz
     }
 
     // Reset abort flag before each transcription
-    g_abort_flag = 0;
+    g_abort_flag.store(0);
 
     // Select sampling strategy based on user preference
     struct whisper_full_params params = whisper_full_default_params(
@@ -297,7 +298,7 @@ Java_com_voidterm_voice_WhisperBridge_nativeIsLoaded(JNIEnv *env, jobject /* thi
 
 JNIEXPORT void JNICALL
 Java_com_voidterm_voice_WhisperBridge_nativeAbort(JNIEnv * /*env*/, jobject /* this */) {
-    g_abort_flag = 1;
+    g_abort_flag.store(1);
     LOGI("Abort flag set — whisper_full() will stop at next ggml computation");
 }
 

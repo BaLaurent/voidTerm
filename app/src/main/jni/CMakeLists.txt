@@ -65,6 +65,7 @@ function(build_whisper_jni TARGET_NAME)
     # This is the root cause of the 63s transcription on Quest 2 (expected: ~3-5s).
     target_compile_options(${TARGET_NAME} PRIVATE
         -O3
+        -Wall
         -fvisibility=hidden
         -fvisibility-inlines-hidden
         -ffunction-sections

@@ -215,7 +215,6 @@ public class LayoutEditMode {
     }
 
     private int dp(int value) {
-        return (int) TypedValue.applyDimension(
-                TypedValue.COMPLEX_UNIT_DIP, value, panel.getResources().getDisplayMetrics());
+        return PanelUtils.dp(panel.getContext(), value);
     }
 }

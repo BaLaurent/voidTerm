@@ -79,11 +79,16 @@ public class SettingsDialog {
     private final Activity activity;
     private final Runnable onModelReloadNeeded;
     private final Runnable onLayoutEditAction;
+    private final Runnable onThemeChanged;
+    private final Runnable onPanelVisibilityChanged;
 
-    public SettingsDialog(Activity activity, Runnable onModelReloadNeeded, Runnable onLayoutEditAction) {
+    public SettingsDialog(Activity activity, Runnable onModelReloadNeeded, Runnable onLayoutEditAction,
+                          Runnable onThemeChanged, Runnable onPanelVisibilityChanged) {
         this.activity = activity;
         this.onModelReloadNeeded = onModelReloadNeeded;
         this.onLayoutEditAction = onLayoutEditAction;
+        this.onThemeChanged = onThemeChanged;
+        this.onPanelVisibilityChanged = onPanelVisibilityChanged;
     }
 
     static boolean isHapticEnabled(Context context) {
@@ -377,7 +382,7 @@ public class SettingsDialog {
                 InterfaceTheme selected = themes[pos];
                 if (selected != InterfaceTheme.current(activity)) {
                     InterfaceTheme.save(activity, selected);
-                    ((TermuxActivity) activity).applyTheme();
+                    onThemeChanged.run();
                 }
             }
             @Override
@@ -413,7 +418,7 @@ public class SettingsDialog {
         toolbarToggle.setEnabled(!isFullscreen);
         toolbarToggle.setOnCheckedChangeListener((btn, checked) -> {
             prefs.edit().putBoolean(KEY_COMPACT_TOOLBAR, checked).apply();
-            ((TermuxActivity) activity).updatePanelVisibility();
+            onPanelVisibilityChanged.run();
         });
         layout.addView(toolbarToggle);
 
@@ -431,7 +436,7 @@ public class SettingsDialog {
                 toolbarToggle.setEnabled(!PANEL_FULLSCREEN.equals(panelModeValues[pos]));
                 customLayoutBtn.setEnabled(PANEL_GAMEBOY.equals(panelModeValues[pos]));
                 if (!initializing[0]) {
-                    ((TermuxActivity) activity).updatePanelVisibility();
+                    onPanelVisibilityChanged.run();
                 }
             }
             @Override
