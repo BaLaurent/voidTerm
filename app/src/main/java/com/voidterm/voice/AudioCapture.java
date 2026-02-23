@@ -13,7 +13,7 @@ import android.util.Log;
 public class AudioCapture {
 
     private static final String TAG = "AudioCapture";
-    private static final int SAMPLE_RATE = 16000;
+    public static final int SAMPLE_RATE = 16000;
     private static final int MAX_DURATION_SECONDS = 30;
     private static final int MAX_SAMPLES = SAMPLE_RATE * MAX_DURATION_SECONDS; // 480,000
     private static final int CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO;
@@ -64,7 +64,7 @@ public class AudioCapture {
 
             try {
                 audioRecord = new AudioRecord(
-                        MediaRecorder.AudioSource.MIC,
+                        MediaRecorder.AudioSource.VOICE_RECOGNITION,
                         SAMPLE_RATE,
                         CHANNEL_CONFIG,
                         activeAudioFormat,
@@ -86,7 +86,7 @@ public class AudioCapture {
                     bufferSizeBytes = Math.max(minBufferSize * 2, SAMPLE_RATE * Short.BYTES);
                     try {
                         audioRecord = new AudioRecord(
-                                MediaRecorder.AudioSource.MIC,
+                                MediaRecorder.AudioSource.VOICE_RECOGNITION,
                                 SAMPLE_RATE,
                                 CHANNEL_CONFIG,
                                 activeAudioFormat,

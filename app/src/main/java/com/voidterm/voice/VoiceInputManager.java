@@ -55,6 +55,7 @@ public class VoiceInputManager implements TranscriptionListener {
 
     // Cached WhisperConfig — avoids 8 SharedPreferences reads per transcription
     private volatile WhisperConfig cachedConfig;
+    private volatile boolean preprocessingEnabled;
 
     private static final Set<String> WHISPER_CONFIG_KEYS = new HashSet<>(Arrays.asList(
             SettingsDialog.KEY_WHISPER_LANGUAGE, SettingsDialog.KEY_WHISPER_TRANSLATE,
@@ -68,6 +69,9 @@ public class VoiceInputManager implements TranscriptionListener {
             (prefs, key) -> {
                 if (WHISPER_CONFIG_KEYS.contains(key)) {
                     cachedConfig = null;
+                }
+                if (SettingsDialog.KEY_AUDIO_PREPROCESSING.equals(key)) {
+                    preprocessingEnabled = prefs.getBoolean(key, true);
                 }
             };
 
@@ -112,6 +116,7 @@ public class VoiceInputManager implements TranscriptionListener {
         SharedPreferences prefs = context.getSharedPreferences(SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE);
         prefs.registerOnSharedPreferenceChangeListener(configInvalidator);
         cachedConfig = readWhisperConfig(prefs);
+        preprocessingEnabled = prefs.getBoolean(SettingsDialog.KEY_AUDIO_PREPROCESSING, true);
 
         String modelName = prefs.getString(SettingsDialog.KEY_MODEL_NAME, DEFAULT_MODEL);
         boolean useGpu = prefs.getBoolean(SettingsDialog.KEY_USE_GPU, false);
@@ -195,7 +200,10 @@ public class VoiceInputManager implements TranscriptionListener {
         new Thread(() -> {
             try {
                 float[] pcmData = audioCapture.stopRecording();
-                float audioDurationSec = pcmData != null ? pcmData.length / 16000f : 0f;
+                if (preprocessingEnabled && pcmData != null && pcmData.length > 0) {
+                    pcmData = AudioPreprocessor.process(pcmData);
+                }
+                float audioDurationSec = pcmData != null ? pcmData.length / (float) AudioCapture.SAMPLE_RATE : 0f;
                 long transcribeStart = System.currentTimeMillis();
                 final int[] streamingSentLength = {0};
                 whisperBridge.transcribe(pcmData, config, new WhisperBridge.Callback() {

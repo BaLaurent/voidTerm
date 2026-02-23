@@ -48,6 +48,7 @@ public class SettingsDialog {
     public static final String KEY_WHISPER_SUPPRESS_NON_SPEECH = "whisper_suppress_non_speech";
     public static final String KEY_WHISPER_PROPORTIONAL_CONTEXT = "whisper_proportional_context";
     public static final String KEY_WHISPER_STREAMING = "whisper_streaming";
+    public static final String KEY_AUDIO_PREPROCESSING = "audio_preprocessing";
     public static final String KEY_THEME = "interface_theme";
     public static final String BACK_ESCAPE = "escape";
     public static final String BACK_TOGGLE_KEYBOARD = "toggle_keyboard";
@@ -220,6 +221,23 @@ public class SettingsDialog {
                 prefs.edit().putBoolean(KEY_WHISPER_STREAMING, checked).apply();
                 streamingWarning.setVisibility(checked ? View.VISIBLE : View.GONE);
         });
+
+        // Audio preprocessing toggle
+        CheckBox preprocessingToggle = new CheckBox(activity);
+        preprocessingToggle.setText("Voice preprocessing (emphasis + normalize)");
+        preprocessingToggle.setTextSize(14);
+        preprocessingToggle.setChecked(prefs.getBoolean(KEY_AUDIO_PREPROCESSING, true));
+        preprocessingToggle.setOnCheckedChangeListener((btn, checked) ->
+                prefs.edit().putBoolean(KEY_AUDIO_PREPROCESSING, checked).apply());
+        layout.addView(preprocessingToggle);
+
+        // Audio debug button
+        Button audioDebugBtn = new Button(activity);
+        audioDebugBtn.setText("Audio Debug...");
+        audioDebugBtn.setAllCaps(false);
+        audioDebugBtn.setTextSize(14);
+        audioDebugBtn.setOnClickListener(v -> new AudioDebugDialog(activity).show());
+        layout.addView(audioDebugBtn);
 
         // Advanced section (collapsed by default)
         LinearLayout advancedContainer = new LinearLayout(activity);
