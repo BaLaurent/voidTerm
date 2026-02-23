@@ -183,6 +183,7 @@ public class AudioPreprocessorTest {
         AudioPreprocessor.PipelineResult result = AudioPreprocessor.processWithDiagnostics(input);
         assertNotNull(result.raw);
         assertNotNull(result.afterDc);
+        assertNotNull(result.afterGain);
         assertNotNull(result.afterHp);
         assertNotNull(result.afterEmphasis);
         assertNotNull(result.afterNormalization);
@@ -203,6 +204,76 @@ public class AudioPreprocessorTest {
         for (float v : result) peak = Math.max(peak, Math.abs(v));
         // Should be normalized to ~0.9
         assertEquals(0.9f, peak, 0.01f);
+    }
+
+    // --- Configurable pipeline tests ---
+
+    @Test
+    public void process_withConfig_appliesGainAfterNormalization() {
+        float[] input = new float[1600];
+        for (int i = 0; i < input.length; i++) {
+            input[i] = (float) Math.sin(2 * Math.PI * 440 * i / 16000.0) * 0.2f;
+        }
+        // Gain 2.0 applied after normalization to 0.9 → peak = min(0.9 * 2.0, 1.0) = 1.0
+        AudioConfig config = new AudioConfig(2.0f, 0.97f, 80, 0.9f);
+        float[] result = AudioPreprocessor.process(input, config);
+        float peak = 0f;
+        for (float v : result) peak = Math.max(peak, Math.abs(v));
+        assertEquals(1.0f, peak, 0.01f);
+    }
+
+    @Test
+    public void process_withConfig_gainBelowClip() {
+        float[] input = new float[1600];
+        for (int i = 0; i < input.length; i++) {
+            input[i] = (float) Math.sin(2 * Math.PI * 440 * i / 16000.0) * 0.2f;
+        }
+        // Gain 0.5 after normalization to 0.9 → peak = 0.9 * 0.5 = 0.45 (no clipping)
+        AudioConfig config = new AudioConfig(0.5f, 0.97f, 80, 0.9f);
+        float[] result = AudioPreprocessor.process(input, config);
+        float peak = 0f;
+        for (float v : result) peak = Math.max(peak, Math.abs(v));
+        assertEquals(0.45f, peak, 0.01f);
+    }
+
+    @Test
+    public void process_withConfig_preEmphasisOff() {
+        float[] input = new float[1600];
+        for (int i = 0; i < input.length; i++) {
+            input[i] = (float) Math.sin(2 * Math.PI * 440 * i / 16000.0) * 0.3f;
+        }
+        AudioConfig withEmph = new AudioConfig(1.0f, 0.97f, 80, 0.9f);
+        AudioConfig noEmph = new AudioConfig(1.0f, 0.0f, 80, 0.9f);
+        float[] resultWith = AudioPreprocessor.process(input, withEmph);
+        float[] resultWithout = AudioPreprocessor.process(input, noEmph);
+        assertNotNull(resultWith);
+        assertNotNull(resultWithout);
+        assertEquals(input.length, resultWith.length);
+        assertEquals(input.length, resultWithout.length);
+    }
+
+    @Test
+    public void process_withConfig_customNormTarget() {
+        float[] input = new float[1600];
+        for (int i = 0; i < input.length; i++) {
+            input[i] = (float) Math.sin(2 * Math.PI * 440 * i / 16000.0) * 0.3f;
+        }
+        AudioConfig config = new AudioConfig(1.0f, 0.97f, 80, 0.5f);
+        float[] result = AudioPreprocessor.process(input, config);
+        float peak = 0f;
+        for (float v : result) peak = Math.max(peak, Math.abs(v));
+        assertEquals(0.5f, peak, 0.01f);
+    }
+
+    @Test
+    public void process_withDefaultConfig_matchesNoArgVersion() {
+        float[] input = new float[1600];
+        for (int i = 0; i < input.length; i++) {
+            input[i] = (float) Math.sin(2 * Math.PI * 440 * i / 16000.0) * 0.3f;
+        }
+        float[] resultDefault = AudioPreprocessor.process(input);
+        float[] resultExplicit = AudioPreprocessor.process(input, AudioConfig.DEFAULT);
+        assertArrayEquals(resultDefault, resultExplicit, DELTA);
     }
 
     private static float rms(float[] data) {

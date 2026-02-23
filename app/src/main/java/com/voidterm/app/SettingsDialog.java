@@ -49,6 +49,10 @@ public class SettingsDialog {
     public static final String KEY_WHISPER_PROPORTIONAL_CONTEXT = "whisper_proportional_context";
     public static final String KEY_WHISPER_STREAMING = "whisper_streaming";
     public static final String KEY_AUDIO_PREPROCESSING = "audio_preprocessing";
+    public static final String KEY_AUDIO_GAIN = "audio_gain";
+    public static final String KEY_AUDIO_PRE_EMPHASIS = "audio_pre_emphasis";
+    public static final String KEY_AUDIO_HP_CUTOFF = "audio_hp_cutoff";
+    public static final String KEY_AUDIO_NORM_TARGET = "audio_norm_target";
     public static final String KEY_THEME = "interface_theme";
     public static final String BACK_ESCAPE = "escape";
     public static final String BACK_TOGGLE_KEYBOARD = "toggle_keyboard";
@@ -76,6 +80,22 @@ public class SettingsDialog {
     private static final float[] TEMPERATURE_VALUES = {
         0.0f, 0.2f, 0.4f, 0.6f, 0.8f, 1.0f
     };
+    public static final String[] GAIN_LABELS = {
+        "0.5x", "1.0x (Default)", "1.5x", "2.0x", "3.0x"
+    };
+    public static final float[] GAIN_VALUES = {0.5f, 1.0f, 1.5f, 2.0f, 3.0f};
+    public static final String[] PRE_EMPHASIS_LABELS = {
+        "Off", "0.90 (Light)", "0.95", "0.97 (Default)", "0.99 (Heavy)"
+    };
+    public static final float[] PRE_EMPHASIS_VALUES = {0.0f, 0.90f, 0.95f, 0.97f, 0.99f};
+    public static final String[] HP_CUTOFF_LABELS = {
+        "40 Hz", "60 Hz", "80 Hz (Default)", "100 Hz", "120 Hz"
+    };
+    public static final int[] HP_CUTOFF_VALUES = {40, 60, 80, 100, 120};
+    public static final String[] NORM_TARGET_LABELS = {
+        "0.5 (Quiet)", "0.7", "0.9 (Default)", "1.0 (Max)"
+    };
+    public static final float[] NORM_TARGET_VALUES = {0.5f, 0.7f, 0.9f, 1.0f};
 
     private final Activity activity;
     private final Runnable onModelReloadNeeded;
@@ -227,17 +247,21 @@ public class SettingsDialog {
         preprocessingToggle.setText("Voice preprocessing (emphasis + normalize)");
         preprocessingToggle.setTextSize(14);
         preprocessingToggle.setChecked(prefs.getBoolean(KEY_AUDIO_PREPROCESSING, true));
-        preprocessingToggle.setOnCheckedChangeListener((btn, checked) ->
-                prefs.edit().putBoolean(KEY_AUDIO_PREPROCESSING, checked).apply());
         layout.addView(preprocessingToggle);
 
-        // Audio debug button
-        Button audioDebugBtn = new Button(activity);
-        audioDebugBtn.setText("Audio Debug...");
-        audioDebugBtn.setAllCaps(false);
-        audioDebugBtn.setTextSize(14);
-        audioDebugBtn.setOnClickListener(v -> new AudioDebugDialog(activity).show());
-        layout.addView(audioDebugBtn);
+        // Audio Tuning button — opens AudioDebugDialog (record + tune + listen)
+        Button tuningBtn = new Button(activity);
+        tuningBtn.setText("Audio Tuning...");
+        tuningBtn.setAllCaps(false);
+        tuningBtn.setTextSize(14);
+        tuningBtn.setEnabled(preprocessingToggle.isChecked());
+        tuningBtn.setOnClickListener(v -> new AudioDebugDialog(activity).show());
+        layout.addView(tuningBtn);
+
+        preprocessingToggle.setOnCheckedChangeListener((btn, checked) -> {
+            prefs.edit().putBoolean(KEY_AUDIO_PREPROCESSING, checked).apply();
+            tuningBtn.setEnabled(checked);
+        });
 
         // Advanced section (collapsed by default)
         LinearLayout advancedContainer = new LinearLayout(activity);

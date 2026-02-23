@@ -56,6 +56,7 @@ public class VoiceInputManager implements TranscriptionListener {
     // Cached WhisperConfig — avoids 8 SharedPreferences reads per transcription
     private volatile WhisperConfig cachedConfig;
     private volatile boolean preprocessingEnabled;
+    private volatile AudioConfig cachedAudioConfig;
 
     private static final Set<String> WHISPER_CONFIG_KEYS = new HashSet<>(Arrays.asList(
             SettingsDialog.KEY_WHISPER_LANGUAGE, SettingsDialog.KEY_WHISPER_TRANSLATE,
@@ -65,10 +66,18 @@ public class VoiceInputManager implements TranscriptionListener {
             SettingsDialog.KEY_WHISPER_PROPORTIONAL_CONTEXT, SettingsDialog.KEY_WHISPER_STREAMING
     ));
 
+    private static final Set<String> AUDIO_CONFIG_KEYS = new HashSet<>(Arrays.asList(
+            SettingsDialog.KEY_AUDIO_GAIN, SettingsDialog.KEY_AUDIO_PRE_EMPHASIS,
+            SettingsDialog.KEY_AUDIO_HP_CUTOFF, SettingsDialog.KEY_AUDIO_NORM_TARGET
+    ));
+
     private final SharedPreferences.OnSharedPreferenceChangeListener configInvalidator =
             (prefs, key) -> {
                 if (WHISPER_CONFIG_KEYS.contains(key)) {
                     cachedConfig = null;
+                }
+                if (AUDIO_CONFIG_KEYS.contains(key)) {
+                    cachedAudioConfig = null;
                 }
                 if (SettingsDialog.KEY_AUDIO_PREPROCESSING.equals(key)) {
                     preprocessingEnabled = prefs.getBoolean(key, true);
@@ -117,6 +126,7 @@ public class VoiceInputManager implements TranscriptionListener {
         prefs.registerOnSharedPreferenceChangeListener(configInvalidator);
         cachedConfig = readWhisperConfig(prefs);
         preprocessingEnabled = prefs.getBoolean(SettingsDialog.KEY_AUDIO_PREPROCESSING, true);
+        cachedAudioConfig = readAudioConfig(prefs);
 
         String modelName = prefs.getString(SettingsDialog.KEY_MODEL_NAME, DEFAULT_MODEL);
         boolean useGpu = prefs.getBoolean(SettingsDialog.KEY_USE_GPU, false);
@@ -201,7 +211,7 @@ public class VoiceInputManager implements TranscriptionListener {
             try {
                 float[] pcmData = audioCapture.stopRecording();
                 if (preprocessingEnabled && pcmData != null && pcmData.length > 0) {
-                    pcmData = AudioPreprocessor.process(pcmData);
+                    pcmData = AudioPreprocessor.process(pcmData, buildAudioConfig());
                 }
                 float audioDurationSec = pcmData != null ? pcmData.length / (float) AudioCapture.SAMPLE_RATE : 0f;
                 long transcribeStart = System.currentTimeMillis();
@@ -344,6 +354,25 @@ public class VoiceInputManager implements TranscriptionListener {
         config = readWhisperConfig(prefs);
         cachedConfig = config;
         return config;
+    }
+
+    private AudioConfig buildAudioConfig() {
+        AudioConfig config = cachedAudioConfig;
+        if (config != null) return config;
+
+        SharedPreferences prefs = appContext.getSharedPreferences(SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE);
+        config = readAudioConfig(prefs);
+        cachedAudioConfig = config;
+        return config;
+    }
+
+    private static AudioConfig readAudioConfig(SharedPreferences prefs) {
+        return new AudioConfig(
+                prefs.getFloat(SettingsDialog.KEY_AUDIO_GAIN, AudioConfig.DEFAULT.inputGain),
+                prefs.getFloat(SettingsDialog.KEY_AUDIO_PRE_EMPHASIS, AudioConfig.DEFAULT.preEmphasis),
+                prefs.getInt(SettingsDialog.KEY_AUDIO_HP_CUTOFF, AudioConfig.DEFAULT.hpCutoffHz),
+                prefs.getFloat(SettingsDialog.KEY_AUDIO_NORM_TARGET, AudioConfig.DEFAULT.normTarget)
+        );
     }
 
     private static WhisperConfig readWhisperConfig(SharedPreferences prefs) {
