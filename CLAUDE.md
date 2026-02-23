@@ -43,7 +43,9 @@ Four Gradle modules: `:app` (main), `:terminal-emulator`, `:terminal-view`, `:te
 
 ```
 Quest Controller (A/X) → QuestInputHandler → VoiceInputManager (state machine)
-Quest Microphone → AudioCapture (PCM float32 16kHz) → WhisperBridge (JNI) → TranscriptionOverlay
+Quest Microphone → AudioCapture (PCM float32 16kHz, VOICE_RECOGNITION source)
+  → [optional] AudioPreprocessor (DC removal → HP 80Hz → pre-emphasis 0.97 → peak norm)
+  → WhisperBridge (JNI) → TranscriptionOverlay
 User confirms (Enter) → VoiceInputCallback.onVoiceTextReady() → Terminal PTY
 ```
 
@@ -54,7 +56,7 @@ User confirms (Enter) → VoiceInputCallback.onVoiceTextReady() → Terminal PTY
 | Package | Role |
 |---|---|
 | `com.voidterm.contracts` | Shared interfaces: `VoiceState`, `VoiceInputCallback`, `TranscriptionListener`, `ControlPanel`, `ControlPanelListener` |
-| `com.voidterm.voice` | Voice system: `VoiceInputManager`, `AudioCapture`, `WhisperBridge`, `TranscriptionOverlay` |
+| `com.voidterm.voice` | Voice system: `VoiceInputManager`, `AudioCapture`, `AudioPreprocessor`, `WhisperBridge`, `TranscriptionOverlay` |
 | `com.voidterm.input` | Controller mapping: `QuestInputHandler` |
 | `com.voidterm.app` | Activity, UI, styling: `TermuxActivity`, `SessionManager`, `SessionListAdapter`, `GameBoyControlPanel`, `CompactToolbar`, `MacroExecutor`, `MacroEditDialog`, `TerminalStyleDialog`, `SettingsDialog`, `ExtraKeysConfig` |
 
