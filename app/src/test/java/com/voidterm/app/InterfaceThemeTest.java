@@ -51,15 +51,23 @@ public class InterfaceThemeTest {
     }
 
     @Test
-    public void darkenColor_factorAboveOne_doesNotClamp() {
-        // darkenColor does NOT clamp to 255 (unlike lightenColor).
+    public void darkenColor_factorAboveOne_noClampNeeded() {
         // 0xFF646464: R=100, G=100, B=100. Factor 1.5 -> (int)(100*1.5) = 150.
         int result = InterfaceTheme.darkenColor(0xFF646464, 1.5f);
         assertEquals(255, Color.alpha(result));
-        // (int)(100 * 1.5f) = 150 — fits in byte, no overflow
         assertEquals(150, Color.red(result));
         assertEquals(150, Color.green(result));
         assertEquals(150, Color.blue(result));
+    }
+
+    @Test
+    public void darkenColor_negativeFactor_clampsToZero() {
+        // Negative factor should clamp all channels to 0, not produce negative values.
+        int result = InterfaceTheme.darkenColor(0xFFFFFFFF, -0.5f);
+        assertEquals(255, Color.alpha(result));
+        assertEquals(0, Color.red(result));
+        assertEquals(0, Color.green(result));
+        assertEquals(0, Color.blue(result));
     }
 
     // ---------------------------------------------------------------

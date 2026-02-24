@@ -49,7 +49,7 @@ Quest Microphone → AudioCapture (PCM float32 16kHz, VOICE_RECOGNITION source)
 User confirms (Enter) → VoiceInputCallback.onVoiceTextReady() → Terminal PTY
 ```
 
-**State machine** (VoiceInputManager): `IDLE → RECORDING → TRANSCRIBING → SHOWING_RESULT → EDITING → IDLE`. Double-tap cancels recording. Escape cancels transcription. Error auto-dismisses after 3s.
+**State machine** (VoiceInputManager): `IDLE → RECORDING → TRANSCRIBING → SHOWING_RESULT → EDITING → IDLE`. Double-tap cancels recording. Escape cancels transcription (also aborts native whisper via `WhisperBridge.abort()`). Error auto-dismisses after 3s. Minimum audio duration check (0.5s) prevents hallucinations from ultra-short PTT. `reloadModel()` is gated on IDLE state to prevent bridge-release race conditions. `dispatchStateChange()` checks a `destroyed` flag to prevent stale callbacks on destroyed activities.
 
 ### Package Layout
 
@@ -62,7 +62,7 @@ User confirms (Enter) → VoiceInputCallback.onVoiceTextReady() → Terminal PTY
 
 ### JNI Layer
 
-`app/src/main/jni/whisper_jni.cpp` bridges to whisper.cpp (git submodule at `app/src/main/jni/whisper.cpp`, pinned to v1.7.3). Six native methods on `WhisperBridge`: `nativeInit`, `nativeTranscribe`, `nativeFree`, `nativeIsLoaded`, `nativeAbort` (cooperative cancellation via ggml abort callback), `nativeGetSystemInfo` (NEON/FP16/backend info).
+`app/src/main/jni/whisper_jni.cpp` bridges to whisper.cpp (git submodule at `app/src/main/jni/whisper.cpp`, pinned to v1.7.3). Six native methods on `WhisperBridge`: `nativeInit`, `nativeTranscribe`, `nativeFree`, `nativeIsLoaded`, `nativeAbort` (cooperative cancellation via ggml abort callback), `nativeGetSystemInfo` (NEON/FP16/backend info). JNI layer includes null guards on `language` and `audioData` parameters. The `g_abort_flag` is process-global (assumes single active transcription, enforced by Java-side `isTranscribing` CAS).
 
 ### Native Build (CMakeLists.txt)
 
@@ -85,7 +85,7 @@ Critical build details:
 - **WhisperBridge-ModelLoad:** one-time model loading from assets
 - **DeviceProfiler:** one-time benchmark after model load (1s synthetic audio)
 
-Thread safety: `VoiceInputManager` uses `stateLock` for state transitions, dispatches outside lock. `WhisperBridge` uses `AtomicBoolean` guards for concurrent call rejection. `AudioCapture` uses `lock` for start/stop.
+Thread safety: `VoiceInputManager` uses `stateLock` for state transitions, dispatches outside lock. Precondition checks (model loaded, audio start) happen inside the lock before committing the RECORDING state. `WhisperBridge` uses `AtomicBoolean` guards for concurrent call rejection; `abort()` exposes `nativeAbort()` for external callers. `AudioCapture` uses `lock` for start/stop; `stopRecording()` calls `audioRecord.stop()` before thread join to unblock `READ_BLOCKING`.
 
 ## Key Contracts
 
@@ -107,7 +107,7 @@ Changes to files in `com.voidterm.contracts` affect the entire voice pipeline. `
 
 Panel mode (`KEY_PANEL_MODE` in SharedPreferences) controls which panel is shown: `"gameboy"` (default), `"compact"`, or `"fullscreen"`. In gameboy/compact modes, `CompactToolbar` replaces the main panel when the keyboard is visible (if toolbar enabled). In fullscreen mode, only `CompactToolbar` is shown. `TermuxActivity.updatePanelVisibility()` handles all transitions, syncing modifier and macro page state between panels. Migration from the old `KEY_FULLSCREEN_MODE` boolean is handled by `SettingsDialog.migratePanelMode()`.
 
-All three panels use `onDetachedFromWindow()` to cancel arrow repeat runnables and unregister `SharedPreferences` listeners. Arrow repeat uses tracked `activeRepeatRunnable`/`activeRepeatView` fields with explicit `cancelRepeat()` on touch-up and detach.
+All three panels register `SharedPreferences` listeners in `onAttachedToWindow()` and unregister in `onDetachedFromWindow()` (prevents leak if panel is created but never attached). Arrow repeat uses tracked `activeRepeatRunnable`/`activeRepeatView` fields with explicit `cancelRepeat()` on touch-up and detach.
 
 ### Macro System
 
@@ -121,7 +121,7 @@ Supported tags: `{esc}`, `{enter}`, `{tab}`, `{up}`, `{down}`, `{left}`, `{right
 
 ### Interface Theming
 
-`InterfaceTheme` enum defines 4 themes (GAMEBOY, DARK_GAMEBOY, ATOMIC_PURPLE, HACKERBOY), each with 7 panel colors + 2 drawer colors (`drawerBg`, `drawerAccent`). Static helpers: `darkenColor()`, `lightenColor()`, `isLightColor()` (luminance-based light/dark detection). Persisted via `SettingsDialog.KEY_THEME`.
+`InterfaceTheme` enum defines 4 themes (GAMEBOY, DARK_GAMEBOY, ATOMIC_PURPLE, HACKERBOY), each with 7 panel colors + 2 drawer colors (`drawerBg`, `drawerAccent`). Static helpers: `darkenColor()` (clamps to 0), `lightenColor()` (clamps to 255), `isLightColor()` (luminance-based light/dark detection). Persisted via `SettingsDialog.KEY_THEME`.
 
 The session drawer (`TermuxActivity.buildDrawerPanel()`) and `SessionListAdapter` use `drawerBg`/`drawerAccent` for theme-consistent colors. Text color adapts via `isLightColor(drawerBg)` — dark text on light backgrounds (GameBoy cream), light text on dark backgrounds. `TermuxActivity.rebuildDrawerPanel()` replaces the drawer panel on theme change.
 
@@ -225,7 +225,7 @@ Handled entirely in `TermuxActivity.handleCustomVolumeKey(int keyCode)` — no `
 
 ### Lifecycle & Error Recovery
 
-`TermuxActivity` implements `onPause()` to cancel active voice recording when backgrounded (prevents microphone leak). `onResume()` is minimal — the voice system stays loaded. The uncaught exception handler chains to Android's default handler after logging.
+`TermuxActivity` implements `onPause()` to cancel active voice recording when backgrounded (prevents microphone leak). `onResume()` only rebuilds panels if the theme changed (tracked via `lastAppliedTheme` field) — avoids destroying/recreating panels on every resume. The uncaught exception handler chains to Android's default handler after logging.
 
 `VoiceInputManager`'s pipeline thread (`VoiceInput-Pipeline`) wraps its body in try-catch to prevent the state machine from getting stuck in `TRANSCRIBING` on unexpected exceptions — transitions to `ERROR` with auto-dismiss.
 
@@ -255,7 +255,7 @@ All three panels implement the `ControlPanel` interface (`com.voidterm.contracts
 
 ### SharedPreferences Key Constants
 
-All preference keys for `voidterm_settings` are centralized as `public static final` constants in `SettingsDialog` (e.g. `SettingsDialog.KEY_WHISPER_LANGUAGE`). Other classes (VoiceInputManager, DeviceProfiler, InterfaceTheme) reference these constants — never raw strings. This ensures the compiler catches key renames.
+All preference keys for `voidterm_settings` are centralized as `public static final` constants in `SettingsDialog` (e.g. `SettingsDialog.KEY_WHISPER_LANGUAGE`). Style prefs keys (`PREFS_NAME`, `KEY_FONT_SIZE`) are `public static final` in `TerminalStyleDialog`. Other classes (VoiceInputManager, DeviceProfiler, InterfaceTheme, VoidTermTerminalViewClient) reference these constants — never raw strings. This ensures the compiler catches key renames.
 
 ### Path Remapping (com.termux → com.voidterm)
 
@@ -265,13 +265,13 @@ Termux binaries have `/data/data/com.termux/files/usr` hardcoded in ELF .rodata.
 
 2. **DPkg post-invoke hook** (`$PREFIX/lib/voidterm-patch-new.sh`): Registered via `$PREFIX/etc/apt/apt.conf.d/99-voidterm-patcher.conf`. Auto-patches ELF (via `perl -pi`) and text files (via `grep -I` + `sed -i`) after each `apt install`. Only processes `.list` files modified in last 2 minutes. **Critical**: apt config must reference `prefixDir` path (not `stagingDir`) — the staging dir is renamed after bootstrap install.
 
-3. **LD_PRELOAD** (`libvoidterm-remap.so` / `voidterm_remap.c`): 14 file-access hooks (open, mkdir, stat, etc.) remap `/data/data/com.termux/` → `/data/data/com.voidterm/` at runtime. Copied from APK native libs to `$PREFIX/lib/` by `TermuxActivity.copyRemapLibrary()`. Set in initial environment by `buildEnvironment()`. `.bashrc` snippet re-adds it after Termux profile overwrites `LD_PRELOAD`. Does NOT hook `execve()` — `libtermux-exec.so` bypasses PLT for exec, making our hook unreachable.
+3. **LD_PRELOAD** (`libvoidterm-remap.so` / `voidterm_remap.c`): 14 file-access hooks (open, mkdir, stat, etc.) remap `/data/data/com.termux/` → `/data/data/com.voidterm/` at runtime. Function pointers resolved via `__attribute__((constructor))` at library load (thread-safe). Path buffer uses `PATH_MAX` (4096) to handle deep paths. Copied from APK native libs to `$PREFIX/lib/` by `TermuxActivity.copyRemapLibrary()`. Set in initial environment by `buildEnvironment()`. `.bashrc` snippet re-adds it after Termux profile overwrites `LD_PRELOAD`. Does NOT hook `execve()` — `libtermux-exec.so` bypasses PLT for exec, making our hook unreachable.
 
 Build requirements for LD_PRELOAD: `extractNativeLibs=true` in AndroidManifest.xml, `useLegacyPackaging=true` in build.gradle (ensures .so files are extractable, not stored compressed in APK).
 
 ## Code Review & Remediation
 
-`plans/CODE_REVIEW.md` documents 61 findings from a 5-agent parallel code review (concurrency, JNI, UI, architecture, config). Phases 1-4 completed (36 findings fixed). Phase 5 (interface commune panels) completed. Completion reports in `plans/completed/`.
+`plans/CODE_REVIEW.md` documents 61 findings from a 5-agent parallel code review (concurrency, JNI, UI, architecture, config). Phases 1-5 completed (36 findings fixed). A second full-codebase review (5 parallel agents: concurrency, JNI, UI/lifecycle, security, voice pipeline) identified 7 critical + 16 important issues, all fixed in commit `94f7bae`. Key fixes: state machine precondition validation, JNI null guards, `__attribute__((constructor))` for LD_PRELOAD hooks, `darkenColor` clamping, `SessionListAdapter` tag-based position tracking, symlink path traversal defense, `onResume` theme gate.
 
 ## Code Style
 
