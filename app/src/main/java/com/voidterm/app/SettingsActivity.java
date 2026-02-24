@@ -137,23 +137,25 @@ public class SettingsActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
-        // Save text fields
+        // Save text fields in a single batch
+        SharedPreferences.Editor editor = prefs.edit();
         if (promptField != null) {
-            prefs.edit().putString(SettingsDialog.KEY_WHISPER_INITIAL_PROMPT,
-                    promptField.getText().toString()).apply();
+            editor.putString(SettingsDialog.KEY_WHISPER_INITIAL_PROMPT,
+                    promptField.getText().toString());
         }
         if (macroField != null) {
-            prefs.edit().putString(SettingsDialog.KEY_BACK_MACRO,
-                    macroField.getText().toString()).apply();
+            editor.putString(SettingsDialog.KEY_BACK_MACRO,
+                    macroField.getText().toString());
         }
         if (volumeUpMacroField != null) {
-            prefs.edit().putString(SettingsDialog.KEY_VOLUME_UP_MACRO,
-                    volumeUpMacroField.getText().toString()).apply();
+            editor.putString(SettingsDialog.KEY_VOLUME_UP_MACRO,
+                    volumeUpMacroField.getText().toString());
         }
         if (volumeDownMacroField != null) {
-            prefs.edit().putString(SettingsDialog.KEY_VOLUME_DOWN_MACRO,
-                    volumeDownMacroField.getText().toString()).apply();
+            editor.putString(SettingsDialog.KEY_VOLUME_DOWN_MACRO,
+                    volumeDownMacroField.getText().toString());
         }
+        editor.apply();
     }
 
     // --- Title ---

@@ -53,6 +53,8 @@ public class VoiceInputManager implements TranscriptionListener {
     private final Object stateLock = new Object();
     private VoiceState currentState = VoiceState.IDLE;
 
+    private volatile boolean destroyed = false;
+
     // Cached WhisperConfig — avoids 8 SharedPreferences reads per transcription
     private volatile WhisperConfig cachedConfig;
     private volatile boolean preprocessingEnabled;
@@ -150,37 +152,40 @@ public class VoiceInputManager implements TranscriptionListener {
                 Log.w(TAG, "PTT pressed in " + currentState + " state, ignoring");
                 return;
             }
-            currentState = VoiceState.RECORDING;
-            newState = VoiceState.RECORDING;
-        }
 
-        if (!whisperBridge.isModelLoaded()) {
-            Log.e(TAG, "PTT pressed but whisper model not loaded");
-            synchronized (stateLock) {
+            // Precondition checks INSIDE stateLock — only transition to RECORDING
+            // after both pass. whisperBridge.isModelLoaded() acquires contextLock
+            // internally; nesting stateLock->contextLock is safe (no reverse ordering).
+            if (!whisperBridge.isModelLoaded()) {
+                Log.e(TAG, "PTT pressed but whisper model not loaded");
                 currentState = VoiceState.ERROR;
                 newState = VoiceState.ERROR;
             }
-            overlay.showError("Voice model not ready");
+
+            if (newState == null) {
+                boolean started = audioCapture.startRecording();
+                if (!started) {
+                    Log.e(TAG, "PTT pressed but microphone failed to start");
+                    currentState = VoiceState.ERROR;
+                    newState = VoiceState.ERROR;
+                } else {
+                    currentState = VoiceState.RECORDING;
+                    newState = VoiceState.RECORDING;
+                }
+            }
+        }
+
+        if (newState == VoiceState.ERROR) {
+            String errorMsg = whisperBridge.isModelLoaded()
+                    ? "Microphone permission required"
+                    : "Voice model not ready";
+            overlay.showError(errorMsg);
             dispatchStateChange(newState);
             mainHandler.postDelayed(errorDismissRunnable, ERROR_DISMISS_DELAY_MS);
             return;
         }
 
         dispatchStateChange(newState);
-
-        boolean started = audioCapture.startRecording();
-        if (!started) {
-            // Recording failed (likely permission denied)
-            synchronized (stateLock) {
-                currentState = VoiceState.ERROR;
-                newState = VoiceState.ERROR;
-            }
-            overlay.showError("Microphone permission required");
-            dispatchStateChange(newState);
-            mainHandler.postDelayed(errorDismissRunnable, ERROR_DISMISS_DELAY_MS);
-            return;
-        }
-
         mainHandler.post(volumePollRunnable);
     }
 
@@ -214,6 +219,34 @@ public class VoiceInputManager implements TranscriptionListener {
                     pcmData = AudioPreprocessor.process(pcmData, buildAudioConfig());
                 }
                 float audioDurationSec = pcmData != null ? pcmData.length / (float) AudioCapture.SAMPLE_RATE : 0f;
+
+                // I10: Skip transcription for ultra-short recordings (< 0.5s)
+                // to avoid whisper hallucinations on near-empty audio
+                if (audioDurationSec < 0.5f) {
+                    Log.w(TAG, "Recording too short (" + String.format("%.2f", audioDurationSec) + "s), skipping transcription");
+                    VoiceState errorState;
+                    synchronized (stateLock) {
+                        currentState = VoiceState.ERROR;
+                        errorState = VoiceState.ERROR;
+                    }
+                    mainHandler.post(() -> {
+                        overlay.showError("Recording too short");
+                        dispatchStateChange(errorState);
+                        mainHandler.postDelayed(errorDismissRunnable, ERROR_DISMISS_DELAY_MS);
+                    });
+                    return;
+                }
+
+                // I1-voice: Re-check state before expensive transcription — a
+                // cancel (double-tap or onCancelRequested) may have moved us out
+                // of TRANSCRIBING while we were stopping/preprocessing audio.
+                synchronized (stateLock) {
+                    if (currentState != VoiceState.TRANSCRIBING) {
+                        Log.w(TAG, "Pipeline cancelled before transcribe() (state=" + currentState + ")");
+                        return;
+                    }
+                }
+
                 long transcribeStart = System.currentTimeMillis();
                 final int[] streamingSentLength = {0};
                 whisperBridge.transcribe(pcmData, config, new WhisperBridge.Callback() {
@@ -332,8 +365,20 @@ public class VoiceInputManager implements TranscriptionListener {
      * Releases the current model and loads the new one.
      */
     public void reloadModel(Context context, String modelFileName) {
+        // Reject if voice pipeline is active — release()+new is not atomic and a
+        // pipeline thread could call transcribe() on the released bridge.
+        synchronized (stateLock) {
+            if (currentState != VoiceState.IDLE && currentState != VoiceState.ERROR) {
+                Log.w(TAG, "Cannot reload model in " + currentState + " state");
+                return;
+            }
+        }
+
         whisperBridge.release();
         whisperBridge = new WhisperBridge();
+        // Stale mainHandler callbacks (from old bridge's loadModel or profiling) are
+        // safe: they check currentState under stateLock before acting, and will see
+        // LOADING (which discards stale IDLE transitions from the old callback).
 
         SharedPreferences prefs = context.getSharedPreferences(SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE);
         boolean useGpu = prefs.getBoolean(SettingsDialog.KEY_USE_GPU, false);
@@ -454,6 +499,7 @@ public class VoiceInputManager implements TranscriptionListener {
      * Release all resources. Must be called when voice input is no longer needed.
      */
     public void destroy() {
+        destroyed = true;
         mainHandler.removeCallbacks(volumePollRunnable);
         mainHandler.removeCallbacks(errorDismissRunnable);
         appContext.getSharedPreferences(SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE)
@@ -482,15 +528,28 @@ public class VoiceInputManager implements TranscriptionListener {
     @Override
     public void onCancelRequested() {
         VoiceState newState = null;
+        boolean wasTranscribing = false;
         synchronized (stateLock) {
-            if (currentState != VoiceState.SHOWING_RESULT
-                    && currentState != VoiceState.EDITING
-                    && currentState != VoiceState.ERROR) {
+            if (currentState == VoiceState.TRANSCRIBING) {
+                // I5: Allow cancelling during transcription — especially important
+                // in streaming mode where hallucinations go directly to terminal.
+                wasTranscribing = true;
+                currentState = VoiceState.IDLE;
+                newState = VoiceState.IDLE;
+            } else if (currentState == VoiceState.SHOWING_RESULT
+                    || currentState == VoiceState.EDITING
+                    || currentState == VoiceState.ERROR) {
+                mainHandler.removeCallbacks(errorDismissRunnable);
+                currentState = VoiceState.IDLE;
+                newState = VoiceState.IDLE;
+            } else {
                 return;
             }
-            mainHandler.removeCallbacks(errorDismissRunnable);
-            currentState = VoiceState.IDLE;
-            newState = VoiceState.IDLE;
+        }
+        // When cancelling during transcription, abort native computation early
+        // and let the state guard in the callback discard the stale result.
+        if (wasTranscribing) {
+            whisperBridge.abort();
         }
         dispatchStateChange(newState);
     }
@@ -514,6 +573,10 @@ public class VoiceInputManager implements TranscriptionListener {
      */
     private void dispatchStateChange(VoiceState newState) {
         if (newState == null) return;
+        if (destroyed) {
+            Log.w(TAG, "dispatchStateChange(" + newState + ") after destroy, ignoring");
+            return;
+        }
         Log.d(TAG, "-> " + newState);
         overlay.setState(newState);
         callback.onVoiceStateChanged(newState);

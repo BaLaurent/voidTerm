@@ -69,10 +69,9 @@ public class GameBoyControlPanel extends FrameLayout implements ControlPanel {
         theme = InterfaceTheme.current(context);
         macros = MacroStore.load(context);
 
-        SharedPreferences prefs = context.getSharedPreferences(
-                SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE);
-        hapticEnabled = prefs.getBoolean(SettingsDialog.KEY_HAPTIC_FEEDBACK, true);
-        prefs.registerOnSharedPreferenceChangeListener(hapticListener);
+        hapticEnabled = context.getSharedPreferences(
+                SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(SettingsDialog.KEY_HAPTIC_FEEDBACK, true);
 
         Map<String, float[]> positions = LayoutStore.load(context);
         if (positions != null) {
@@ -534,6 +533,13 @@ public class GameBoyControlPanel extends FrameLayout implements ControlPanel {
         dpad.addView(right, rightLp);
 
         return dpad;
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        getContext().getSharedPreferences(SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE)
+                .registerOnSharedPreferenceChangeListener(hapticListener);
     }
 
     @Override

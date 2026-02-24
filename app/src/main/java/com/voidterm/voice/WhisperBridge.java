@@ -79,6 +79,11 @@ public class WhisperBridge {
     private native void nativeAbort();
     private native String nativeGetSystemInfo();
 
+    /** Public abort for external callers (e.g. VoiceInputManager cancel during streaming). */
+    public void abort() {
+        nativeAbort();
+    }
+
     private final int preferredThreadCount = CpuInfo.getPreferredThreadCount();
 
     private final Object contextLock = new Object();

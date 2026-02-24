@@ -219,6 +219,18 @@ public class AudioCapture {
 
             isRecording = false;
 
+            // Stop AudioRecord BEFORE joining the thread — the record loop may be
+            // blocked in READ_BLOCKING and will never see isRecording==false until
+            // the HAL returns. Stopping the AudioRecord unblocks the read call.
+            if (audioRecord != null) {
+                try {
+                    audioRecord.stop();
+                    recordingStopped = true;
+                } catch (IllegalStateException e) {
+                    Log.w(TAG, "AudioRecord stop failed", e);
+                }
+            }
+
             if (recordingThread != null) {
                 try {
                     recordingThread.join(2000);
@@ -227,15 +239,6 @@ public class AudioCapture {
                     Log.w(TAG, "Interrupted while waiting for recording thread");
                 }
                 recordingThread = null;
-            }
-
-            if (audioRecord != null) {
-                try {
-                    audioRecord.stop();
-                    recordingStopped = true;
-                } catch (IllegalStateException e) {
-                    Log.w(TAG, "AudioRecord stop failed", e);
-                }
             }
 
             // Copy only the recorded portion
@@ -290,6 +293,15 @@ public class AudioCapture {
         synchronized (lock) {
             if (isRecording) {
                 isRecording = false;
+                // Stop AudioRecord before joining thread to unblock READ_BLOCKING
+                if (audioRecord != null && !recordingStopped) {
+                    try {
+                        audioRecord.stop();
+                        recordingStopped = true;
+                    } catch (IllegalStateException e) {
+                        // Already stopped or not initialized
+                    }
+                }
                 if (recordingThread != null) {
                     try {
                         recordingThread.join(2000);

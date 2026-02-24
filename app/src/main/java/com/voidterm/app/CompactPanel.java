@@ -51,10 +51,9 @@ public class CompactPanel extends FrameLayout implements ControlPanel {
         setBackgroundColor(theme.background);
         macros = MacroStore.load(context);
 
-        SharedPreferences prefs = context.getSharedPreferences(
-                SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE);
-        hapticEnabled = prefs.getBoolean(SettingsDialog.KEY_HAPTIC_FEEDBACK, true);
-        prefs.registerOnSharedPreferenceChangeListener(hapticListener);
+        hapticEnabled = context.getSharedPreferences(
+                SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(SettingsDialog.KEY_HAPTIC_FEEDBACK, true);
 
         buildLayout(context);
     }
@@ -214,6 +213,13 @@ public class CompactPanel extends FrameLayout implements ControlPanel {
         for (int i = 0; i < 12; i++) {
             macroButtons[i].setText(macros[i][0]);
         }
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        getContext().getSharedPreferences(SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE)
+                .registerOnSharedPreferenceChangeListener(hapticListener);
     }
 
     @Override

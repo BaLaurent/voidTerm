@@ -13,6 +13,7 @@
 
 // Abort flag for cooperative cancellation of whisper_full() via ggml_abort_callback.
 // Set by nativeAbort(), checked before each ggml computation, reset at transcription start.
+// Process-global: assumes at most one active transcription at a time.
 static std::atomic<int> g_abort_flag(0);
 
 static bool whisper_abort_callback(void * /*user_data*/) {
@@ -35,7 +36,7 @@ static void voidterm_progress_cb(struct whisper_context * /*ctx*/, struct whispe
 // Data passed to whisper's new_segment_callback when streaming is enabled.
 // Accumulates decoded text and forwards it to Java via JNI on each new segment.
 struct StreamCallbackData {
-    JNIEnv   *env;
+    JNIEnv   *env;          // valid because whisper_full() invokes callbacks on the calling thread
     jobject   bridgeRef;    // global ref to WhisperBridge instance
     jmethodID onSegmentMethod;
     std::string accumulated;
@@ -69,6 +70,8 @@ static void streaming_segment_callback(struct whisper_context *ctx,
     if (jtext) {
         data->env->CallVoidMethod(data->bridgeRef, data->onSegmentMethod, jtext);
         data->env->DeleteLocalRef(jtext);
+    } else {
+        LOGE("NewStringUTF failed in streaming callback (accumulated=%zu chars)", data->accumulated.size());
     }
 
     // If Java threw during the callback (e.g. OOM in mainHandler.post()),
@@ -120,6 +123,11 @@ Java_com_voidterm_voice_WhisperBridge_nativeTranscribe(JNIEnv *env, jobject thiz
         return nullptr;
     }
 
+    if (audioData == nullptr) {
+        LOGE("audioData is null");
+        return nullptr;
+    }
+
     struct whisper_context *ctx = reinterpret_cast<struct whisper_context *>(contextPtr);
 
     jsize audioLength = env->GetArrayLength(audioData);
@@ -146,7 +154,10 @@ Java_com_voidterm_voice_WhisperBridge_nativeTranscribe(JNIEnv *env, jobject thiz
         }
     }
 
-    const char *lang = env->GetStringUTFChars(language, nullptr);
+    const char *lang = nullptr;
+    if (language != nullptr) {
+        lang = env->GetStringUTFChars(language, nullptr);
+    }
 
     // Get initial prompt string (may be null)
     const char *prompt = nullptr;

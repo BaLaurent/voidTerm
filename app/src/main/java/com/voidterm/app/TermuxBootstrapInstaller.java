@@ -279,6 +279,12 @@ public class TermuxBootstrapInstaller {
             String linkPath = parts[1].trim();
             File linkFile = new File(baseDir, linkPath);
 
+            // Security: prevent symlink path traversal
+            if (!linkFile.getCanonicalPath().startsWith(baseDir.getCanonicalPath())) {
+                Log.w(TAG, "Symlink path traversal rejected: " + linkPath);
+                continue;
+            }
+
             // Ensure parent directory exists
             linkFile.getParentFile().mkdirs();
 
@@ -383,12 +389,12 @@ public class TermuxBootstrapInstaller {
                 "        # perl -pi handles binary data safely; skip if unavailable\n" +
                 "        command -v perl >/dev/null 2>&1 || return 0\n" +
                 "        perl -pi -e 's|com\\.termux/files|com.voidterm/fil|g;" +
-                "s|com\\.termux/cache|com.voidterm/cac|g' \"$f\" 2>/dev/null\n" +
+                "s|com\\.termux/cache|com.voidterm/cac|g' -- \"$f\" 2>/dev/null\n" +
                 "        ;;\n" +
                 "    *)\n" +
                 "        # grep -I auto-skips binary files (archives, images, .pyc, etc.)\n" +
-                "        grep -Iql 'com\\.termux' \"$f\" 2>/dev/null && \\\n" +
-                "            sed -i 's|com\\.termux|com.voidterm|g' \"$f\" 2>/dev/null\n" +
+                "        grep -Iql 'com\\.termux' -- \"$f\" 2>/dev/null && \\\n" +
+                "            sed -i 's|com\\.termux|com.voidterm|g' -- \"$f\" 2>/dev/null\n" +
                 "        ;;\n" +
                 "    esac\n" +
                 "}\n" +
@@ -404,7 +410,7 @@ public class TermuxBootstrapInstaller {
         fos = new FileOutputStream(patchScript);
         fos.write(scriptContent.getBytes());
         fos.close();
-        patchScript.setExecutable(true, false);
+        Os.chmod(patchScript.getAbsolutePath(), 0700);
 
         // Always use the FINAL prefix path (not staging) so apt finds the script
         // after staging dir is renamed to prefix during fresh install.

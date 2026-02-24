@@ -63,10 +63,9 @@ public class CompactToolbar extends FrameLayout implements ControlPanel {
         setBackgroundColor(theme.background);
         macros = MacroStore.load(context);
 
-        SharedPreferences prefs = context.getSharedPreferences(
-                SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE);
-        hapticEnabled = prefs.getBoolean(SettingsDialog.KEY_HAPTIC_FEEDBACK, true);
-        prefs.registerOnSharedPreferenceChangeListener(hapticListener);
+        hapticEnabled = context.getSharedPreferences(
+                SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(SettingsDialog.KEY_HAPTIC_FEEDBACK, true);
 
         buildMainRow(context);
         buildMacroRow(context);
@@ -326,6 +325,13 @@ public class CompactToolbar extends FrameLayout implements ControlPanel {
                 0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
         lp.setMargins(dp(2), 0, dp(2), 0);
         return lp;
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        getContext().getSharedPreferences(SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE)
+                .registerOnSharedPreferenceChangeListener(hapticListener);
     }
 
     @Override

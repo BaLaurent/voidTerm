@@ -133,16 +133,20 @@ public class SessionListAdapter extends BaseAdapter {
                 ? InterfaceTheme.darkenColor(theme.drawerAccent, 0.7f)
                 : InterfaceTheme.darkenColor(theme.drawerAccent, 0.5f));
 
-        final int idx = position;
+        row.setTag(position);
         row.setOnClickListener(v -> {
-            if (callback != null) callback.onSessionTapped(idx);
+            int pos = (int) v.getTag();
+            if (callback != null) callback.onSessionTapped(pos);
         });
         row.setOnLongClickListener(v -> {
-            if (callback != null) callback.onSessionRenameRequested(idx);
+            int pos = (int) v.getTag();
+            if (callback != null) callback.onSessionRenameRequested(pos);
             return true;
         });
+        closeBtn.setTag(position);
         closeBtn.setOnClickListener(v -> {
-            if (callback != null) callback.onSessionCloseRequested(idx);
+            int pos = (int) v.getTag();
+            if (callback != null) callback.onSessionCloseRequested(pos);
         });
 
         return row;

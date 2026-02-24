@@ -102,9 +102,9 @@ public enum InterfaceTheme {
     }
 
     public static int darkenColor(int color, float factor) {
-        int r = (int) (Color.red(color) * factor);
-        int g = (int) (Color.green(color) * factor);
-        int b = (int) (Color.blue(color) * factor);
+        int r = Math.max(0, (int) (Color.red(color) * factor));
+        int g = Math.max(0, (int) (Color.green(color) * factor));
+        int b = Math.max(0, (int) (Color.blue(color) * factor));
         return Color.argb(Color.alpha(color), r, g, b);
     }
 

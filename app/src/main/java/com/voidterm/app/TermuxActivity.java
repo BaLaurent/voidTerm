@@ -66,6 +66,8 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
     private ViewTreeObserver.OnGlobalLayoutListener layoutListener;
     private final Rect visibleDisplayRect = new Rect();
 
+    private InterfaceTheme lastAppliedTheme;
+
     private DrawerLayout drawerLayout;
     private LinearLayout drawerPanel;
     private SessionListAdapter sessionListAdapter;
@@ -743,6 +745,7 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
      * Called from SettingsDialog after theme selection changes.
      */
     public void applyTheme() {
+        lastAppliedTheme = InterfaceTheme.current(this);
         panelController.applyTheme(this);
         rebuildDrawerPanel();
         updatePanelVisibility();
@@ -1024,7 +1027,10 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
             prefs.edit().putBoolean(SettingsDialog.KEY_MODEL_RELOAD_REQUESTED, false).apply();
             reloadCurrentModel();
         }
-        applyTheme();
+        InterfaceTheme currentTheme = InterfaceTheme.current(this);
+        if (currentTheme != lastAppliedTheme) {
+            applyTheme();
+        }
         updatePanelVisibility();
     }
 

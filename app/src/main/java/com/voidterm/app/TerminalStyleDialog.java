@@ -22,8 +22,8 @@ import com.termux.view.TerminalView;
 public class TerminalStyleDialog {
 
     private static final String TAG = "TerminalStyleDialog";
-    private static final String PREFS_NAME = "voidterm_style";
-    private static final String KEY_FONT_SIZE = "font_size";
+    public static final String PREFS_NAME = "voidterm_style";
+    public static final String KEY_FONT_SIZE = "font_size";
     private static final String KEY_FONT_INDEX = "font_index";
     private static final String KEY_COLOR_INDEX = "color_index";
 
