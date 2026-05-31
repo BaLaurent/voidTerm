@@ -7,6 +7,12 @@
  * /data/data/com.termux/files/usr/etc/dpkg/dpkg.cfg.d are hardcoded
  * in ELF .rodata sections. This library transparently redirects those
  * accesses to our package's data directory.
+ *
+ * IMPORTANT: Hooks may be called BEFORE __attribute__((constructor)) runs,
+ * because libc's __libc_preinit_impl calls access()/open() during its own
+ * initialization (e.g. to seed arc4random from /dev/urandom). On some devices
+ * (e.g. MediaTek), this preinit runs before our constructor.  All hooks must
+ * therefore guard against NULL real_* pointers and fall back to raw syscalls.
  */
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -19,6 +25,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 #define OLD_PREFIX "/data/data/com.termux/"
@@ -75,92 +82,141 @@ static void init_hooks(void) {
     real_realpath  = dlsym(RTLD_NEXT, "realpath");
 }
 
-/* --- Hooked functions --- */
+/* --- Hooked functions ---
+ *
+ * Each hook guards against real_* being NULL (constructor not yet called).
+ * For syscall-backed functions, the fallback is a raw syscall via syscall().
+ * For libc-only functions (fopen, opendir, realpath), the fallback returns
+ * an error, since these are never called during libc preinit.
+ */
 
 int open(const char* path, int flags, ...) {
     char buf[PATH_MAX_BUF];
     path = remap(path, buf);
 
+    mode_t mode = 0;
     if (flags & (O_CREAT | O_TMPFILE)) {
         va_list ap;
         va_start(ap, flags);
-        mode_t mode = va_arg(ap, int);
+        mode = va_arg(ap, int);
         va_end(ap);
-        return real_open(path, flags, mode);
     }
-    return real_open(path, flags);
+
+    if (__builtin_expect(real_open != NULL, 1))
+        return (flags & (O_CREAT | O_TMPFILE)) ? real_open(path, flags, mode) : real_open(path, flags);
+    return syscall(SYS_openat, AT_FDCWD, path, flags, mode);
 }
 
 int openat(int dirfd, const char* path, int flags, ...) {
     char buf[PATH_MAX_BUF];
     path = remap(path, buf);
 
+    mode_t mode = 0;
     if (flags & (O_CREAT | O_TMPFILE)) {
         va_list ap;
         va_start(ap, flags);
-        mode_t mode = va_arg(ap, int);
+        mode = va_arg(ap, int);
         va_end(ap);
-        return real_openat(dirfd, path, flags, mode);
     }
-    return real_openat(dirfd, path, flags);
+
+    if (__builtin_expect(real_openat != NULL, 1))
+        return (flags & (O_CREAT | O_TMPFILE)) ? real_openat(dirfd, path, flags, mode) : real_openat(dirfd, path, flags);
+    return syscall(SYS_openat, dirfd, path, flags, mode);
 }
 
 DIR* opendir(const char* path) {
     char buf[PATH_MAX_BUF];
-    return real_opendir(remap(path, buf));
+    if (__builtin_expect(real_opendir != NULL, 1))
+        return real_opendir(remap(path, buf));
+    errno = ENOSYS;
+    return NULL;
 }
 
 int stat(const char* path, struct stat* sb) {
     char buf[PATH_MAX_BUF];
-    return real_stat(remap(path, buf), sb);
+    path = remap(path, buf);
+    if (__builtin_expect(real_stat != NULL, 1))
+        return real_stat(path, sb);
+    return syscall(SYS_newfstatat, AT_FDCWD, path, sb, 0);
 }
 
 int lstat(const char* path, struct stat* sb) {
     char buf[PATH_MAX_BUF];
-    return real_lstat(remap(path, buf), sb);
+    path = remap(path, buf);
+    if (__builtin_expect(real_lstat != NULL, 1))
+        return real_lstat(path, sb);
+    return syscall(SYS_newfstatat, AT_FDCWD, path, sb, AT_SYMLINK_NOFOLLOW);
 }
 
 int access(const char* path, int mode) {
     char buf[PATH_MAX_BUF];
-    return real_access(remap(path, buf), mode);
+    path = remap(path, buf);
+    if (__builtin_expect(real_access != NULL, 1))
+        return real_access(path, mode);
+    return syscall(SYS_faccessat, AT_FDCWD, path, mode, 0);
 }
 
 int faccessat(int dirfd, const char* path, int mode, int flags) {
     char buf[PATH_MAX_BUF];
-    return real_faccessat(dirfd, remap(path, buf), mode, flags);
+    path = remap(path, buf);
+    if (__builtin_expect(real_faccessat != NULL, 1))
+        return real_faccessat(dirfd, path, mode, flags);
+    return syscall(SYS_faccessat, dirfd, path, mode, flags);
 }
 
 ssize_t readlink(const char* path, char* buf_out, size_t bufsiz) {
     char buf[PATH_MAX_BUF];
-    return real_readlink(remap(path, buf), buf_out, bufsiz);
+    path = remap(path, buf);
+    if (__builtin_expect(real_readlink != NULL, 1))
+        return real_readlink(path, buf_out, bufsiz);
+    return syscall(SYS_readlinkat, AT_FDCWD, path, buf_out, bufsiz);
 }
 
 FILE* fopen(const char* path, const char* mode) {
     char buf[PATH_MAX_BUF];
-    return real_fopen(remap(path, buf), mode);
+    if (__builtin_expect(real_fopen != NULL, 1))
+        return real_fopen(remap(path, buf), mode);
+    errno = ENOSYS;
+    return NULL;
 }
 
 int rename(const char* oldpath, const char* newpath) {
     char buf1[PATH_MAX_BUF], buf2[PATH_MAX_BUF];
-    return real_rename(remap(oldpath, buf1), remap(newpath, buf2));
+    oldpath = remap(oldpath, buf1);
+    newpath = remap(newpath, buf2);
+    if (__builtin_expect(real_rename != NULL, 1))
+        return real_rename(oldpath, newpath);
+    return syscall(SYS_renameat, AT_FDCWD, oldpath, AT_FDCWD, newpath);
 }
 
 int unlink(const char* path) {
     char buf[PATH_MAX_BUF];
-    return real_unlink(remap(path, buf));
+    path = remap(path, buf);
+    if (__builtin_expect(real_unlink != NULL, 1))
+        return real_unlink(path);
+    return syscall(SYS_unlinkat, AT_FDCWD, path, 0);
 }
 
 int mkdir(const char* path, mode_t mode) {
     char buf[PATH_MAX_BUF];
-    return real_mkdir(remap(path, buf), mode);
+    path = remap(path, buf);
+    if (__builtin_expect(real_mkdir != NULL, 1))
+        return real_mkdir(path, mode);
+    return syscall(SYS_mkdirat, AT_FDCWD, path, mode);
 }
 
 int chdir(const char* path) {
     char buf[PATH_MAX_BUF];
-    return real_chdir(remap(path, buf));
+    path = remap(path, buf);
+    if (__builtin_expect(real_chdir != NULL, 1))
+        return real_chdir(path);
+    return syscall(SYS_chdir, path);
 }
 
 char* realpath(const char* path, char* resolved) {
     char buf[PATH_MAX_BUF];
-    return real_realpath(remap(path, buf), resolved);
+    if (__builtin_expect(real_realpath != NULL, 1))
+        return real_realpath(remap(path, buf), resolved);
+    errno = ENOSYS;
+    return NULL;
 }

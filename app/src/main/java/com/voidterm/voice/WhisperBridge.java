@@ -130,14 +130,10 @@ public class WhisperBridge {
     }
 
     /**
-     * Callback for async operations.
+     * Callback type alias — delegates to TranscriptionEngine.Callback
+     * so WhisperEngine adapter doesn't need to bridge two identical interfaces.
      */
-    public interface Callback {
-        void onSuccess(String result);
-        void onError(String error);
-        default void onProgress(String phase, int percent) {}
-        default void onPartialResult(String accumulatedText) {}
-    }
+    public interface Callback extends TranscriptionEngine.Callback {}
 
     /**
      * Called from JNI (streaming_segment_callback) on the transcription thread.

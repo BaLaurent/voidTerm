@@ -51,6 +51,13 @@ public final class SettingsDialog {
     public static final int REQUEST_MODEL_FILE = 1001;
     public static final String KEY_MODEL_RELOAD_REQUESTED = "model_reload_requested";
 
+    // Transcription engine selection
+    public static final String KEY_TRANSCRIPTION_ENGINE = "transcription_engine";
+    public static final String ENGINE_WHISPER = "whisper";
+    public static final String ENGINE_PARAKEET = "parakeet";
+    public static final String[] ENGINE_LABELS = {"Whisper (whisper.cpp)", "Parakeet TDT v3 (ONNX)"};
+    public static final String[] ENGINE_VALUES = {ENGINE_WHISPER, ENGINE_PARAKEET};
+
     public static final String[] LANGUAGE_LABELS = {
         "Auto-detect", "English", "Chinese", "Spanish", "Hindi", "Arabic",
         "French", "Bengali", "Portuguese", "Russian", "Japanese", "German",

@@ -70,6 +70,9 @@ public class SettingsActivity extends Activity {
     private EditText volumeUpMacroField;
     private EditText volumeDownMacroField;
 
+    // Whisper-only transcription controls (hidden when Parakeet selected)
+    private LinearLayout whisperTranscriptionControls;
+
     // Guard against spinner listeners firing during programmatic setSelection()
     private boolean initializing = true;
 
@@ -95,7 +98,7 @@ public class SettingsActivity extends Activity {
 
         buildTitle();
 
-        buildSectionHeader(SECTION_MODEL, "Whisper Model", theme.primary);
+        buildSectionHeader(SECTION_MODEL, "Voice Engine", theme.primary);
         sectionBodies[SECTION_MODEL] = buildModelSection();
         root.addView(sectionBodies[SECTION_MODEL]);
 
@@ -244,15 +247,27 @@ public class SettingsActivity extends Activity {
     private LinearLayout buildModelSection() {
         LinearLayout body = makeSectionBody();
 
+        // Engine selector
+        body.addView(makeLabel("Engine"));
+        String currentEngine = prefs.getString(SettingsDialog.KEY_TRANSCRIPTION_ENGINE,
+                SettingsDialog.ENGINE_WHISPER);
+        Spinner engineSpinner = makeSpinner(SettingsDialog.ENGINE_LABELS);
+        int engineIndex = findIndex(SettingsDialog.ENGINE_VALUES, currentEngine);
+        engineSpinner.setSelection(engineIndex);
+        body.addView(engineSpinner);
+
+        // --- Whisper-specific controls ---
+        LinearLayout whisperControls = new LinearLayout(this);
+        whisperControls.setOrientation(LinearLayout.VERTICAL);
+
         String currentModel = prefs.getString(SettingsDialog.KEY_MODEL_NAME,
                 SettingsDialog.DEFAULT_MODEL);
-
         TextView modelLabel = new TextView(this);
         modelLabel.setText("Current: " + currentModel);
         modelLabel.setTextColor(textColor);
         modelLabel.setTextSize(14);
         modelLabel.setPadding(0, 0, 0, dp(12));
-        body.addView(modelLabel);
+        whisperControls.addView(modelLabel);
 
         Button browseBtn = makeActionButton("Browse...");
         browseBtn.setOnClickListener(v -> {
@@ -261,9 +276,103 @@ public class SettingsActivity extends Activity {
             intent.addCategory(Intent.CATEGORY_OPENABLE);
             startActivityForResult(intent, SettingsDialog.REQUEST_MODEL_FILE);
         });
-        body.addView(browseBtn);
+        whisperControls.addView(browseBtn);
+
+        boolean isWhisper = SettingsDialog.ENGINE_WHISPER.equals(currentEngine);
+        whisperControls.setVisibility(isWhisper ? View.VISIBLE : View.GONE);
+        body.addView(whisperControls);
+
+        // --- Parakeet-specific controls ---
+        LinearLayout parakeetControls = new LinearLayout(this);
+        parakeetControls.setOrientation(LinearLayout.VERTICAL);
+
+        boolean modelsReady = com.voidterm.voice.ParakeetModelManager.isModelComplete(this);
+
+        TextView parakeetStatus = new TextView(this);
+        parakeetStatus.setTextColor(textColor);
+        parakeetStatus.setTextSize(14);
+        parakeetStatus.setPadding(0, 0, 0, dp(8));
+        updateParakeetStatus(parakeetStatus, modelsReady);
+        parakeetControls.addView(parakeetStatus);
+
+        Button downloadBtn = makeActionButton(modelsReady ? "Re-download Models" : "Download Models (~534 MB)");
+        TextView progressText = new TextView(this);
+        progressText.setTextColor(mutedColor);
+        progressText.setTextSize(12);
+        progressText.setVisibility(View.GONE);
+        parakeetControls.addView(progressText);
+
+        downloadBtn.setOnClickListener(v -> {
+            downloadBtn.setEnabled(false);
+            downloadBtn.setText("Downloading...");
+            progressText.setVisibility(View.VISIBLE);
+
+            com.voidterm.voice.ParakeetModelManager.downloadModels(this,
+                    new com.voidterm.voice.ParakeetModelManager.ProgressCallback() {
+                        @Override
+                        public void onProgress(String fileName, int fileIndex, int totalFiles,
+                                               long bytesDownloaded, long totalBytes) {
+                            String sizeMB = String.format("%.1f", bytesDownloaded / 1048576f);
+                            String totalMB = totalBytes > 0
+                                    ? String.format("%.1f", totalBytes / 1048576f) : "?";
+                            progressText.setText("Downloading " + fileName
+                                    + " (" + (fileIndex + 1) + "/" + totalFiles + "): "
+                                    + sizeMB + " / " + totalMB + " MB");
+                        }
+
+                        @Override
+                        public void onFileComplete(String fileName, int fileIndex, int totalFiles) {
+                            progressText.setText(fileName + " complete (" + (fileIndex + 1) + "/" + totalFiles + ")");
+                        }
+
+                        @Override
+                        public void onComplete() {
+                            downloadBtn.setEnabled(true);
+                            downloadBtn.setText("Re-download Models");
+                            progressText.setText("All models downloaded");
+                            updateParakeetStatus(parakeetStatus, true);
+                            prefs.edit().putBoolean(SettingsDialog.KEY_MODEL_RELOAD_REQUESTED, true).apply();
+                        }
+
+                        @Override
+                        public void onError(String error) {
+                            downloadBtn.setEnabled(true);
+                            downloadBtn.setText("Retry Download");
+                            progressText.setText("Error: " + error);
+                        }
+                    });
+        });
+        parakeetControls.addView(downloadBtn);
+
+        parakeetControls.setVisibility(isWhisper ? View.GONE : View.VISIBLE);
+        body.addView(parakeetControls);
+
+        // Engine switch listener
+        engineSpinner.setOnItemSelectedListener(new SimpleItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> p, View v, int pos, long id) {
+                String selected = SettingsDialog.ENGINE_VALUES[pos];
+                prefs.edit()
+                        .putString(SettingsDialog.KEY_TRANSCRIPTION_ENGINE, selected)
+                        .putBoolean(SettingsDialog.KEY_MODEL_RELOAD_REQUESTED, true)
+                        .apply();
+                boolean whisper = SettingsDialog.ENGINE_WHISPER.equals(selected);
+                whisperControls.setVisibility(whisper ? View.VISIBLE : View.GONE);
+                parakeetControls.setVisibility(whisper ? View.GONE : View.VISIBLE);
+                updateTranscriptionVisibility(whisper);
+            }
+        });
 
         return body;
+    }
+
+    private void updateParakeetStatus(TextView statusView, boolean modelsReady) {
+        if (modelsReady) {
+            long sizeMB = com.voidterm.voice.ParakeetModelManager.getDownloadedSize(this) / 1048576;
+            statusView.setText("Parakeet TDT v3 — Models ready (" + sizeMB + " MB)");
+        } else {
+            statusView.setText("Parakeet TDT v3 — Models not downloaded");
+        }
     }
 
     @Override
@@ -333,6 +442,13 @@ public class SettingsActivity extends Activity {
 
     private LinearLayout buildTranscriptionSection() {
         LinearLayout body = makeSectionBody();
+        boolean isWhisper = SettingsDialog.ENGINE_WHISPER.equals(
+                prefs.getString(SettingsDialog.KEY_TRANSCRIPTION_ENGINE, SettingsDialog.ENGINE_WHISPER));
+
+        // --- Whisper-only controls container ---
+        whisperTranscriptionControls = new LinearLayout(this);
+        whisperTranscriptionControls.setOrientation(LinearLayout.VERTICAL);
+        whisperTranscriptionControls.setVisibility(isWhisper ? View.VISIBLE : View.GONE);
 
         // Auto-tune tier info
         String tierName = prefs.getString(DeviceProfiler.KEY_AUTOTUNE_TIER, null);
@@ -344,7 +460,7 @@ public class SettingsActivity extends Activity {
             tierInfo.setTextColor(mutedColor);
             tierInfo.setTextSize(13);
             tierInfo.setPadding(0, 0, 0, dp(8));
-            body.addView(tierInfo);
+            whisperTranscriptionControls.addView(tierInfo);
         }
 
         // Reset to Auto button
@@ -354,7 +470,11 @@ public class SettingsActivity extends Activity {
             prefs.edit().putBoolean(SettingsDialog.KEY_MODEL_RELOAD_REQUESTED, true).apply();
             finish();
         });
-        body.addView(resetAutoBtn);
+        whisperTranscriptionControls.addView(resetAutoBtn);
+
+        body.addView(whisperTranscriptionControls);
+
+        // --- Shared controls (both engines) ---
 
         // Language spinner
         body.addView(makeLabel("Language"));
@@ -364,12 +484,13 @@ public class SettingsActivity extends Activity {
         langSpinner.setSelection(langIndex);
         body.addView(langSpinner);
 
-        // Translate checkbox
+        // Translate checkbox (whisper-only but uses shared language key)
         CheckBox translateToggle = makeCheckBox("Translate to English",
                 prefs.getBoolean(SettingsDialog.KEY_WHISPER_TRANSLATE, false));
         translateToggle.setEnabled(!"en".equals(currentLang));
         translateToggle.setOnCheckedChangeListener((btn, checked) ->
                 prefs.edit().putBoolean(SettingsDialog.KEY_WHISPER_TRANSLATE, checked).apply());
+        translateToggle.setVisibility(isWhisper ? View.VISIBLE : View.GONE);
         body.addView(translateToggle);
 
         langSpinner.setOnItemSelectedListener(new SimpleItemSelectedListener() {
@@ -381,8 +502,11 @@ public class SettingsActivity extends Activity {
             }
         });
 
-        // Initial prompt
-        body.addView(makeLabel("Initial prompt"));
+        // Initial prompt (whisper-only)
+        TextView promptLabel = makeLabel("Initial prompt");
+        promptLabel.setVisibility(isWhisper ? View.VISIBLE : View.GONE);
+        body.addView(promptLabel);
+
         promptField = new EditText(this);
         promptField.setHint("Domain terms, names...");
         promptField.setTextColor(textColor);
@@ -391,11 +515,13 @@ public class SettingsActivity extends Activity {
         promptField.setSingleLine(true);
         promptField.setFilters(new InputFilter[]{new InputFilter.LengthFilter(500)});
         promptField.setText(prefs.getString(SettingsDialog.KEY_WHISPER_INITIAL_PROMPT, ""));
+        promptField.setVisibility(isWhisper ? View.VISIBLE : View.GONE);
         body.addView(promptField);
 
-        // Streaming transcription toggle
+        // Streaming transcription toggle (whisper-only)
         CheckBox streamingToggle = makeCheckBox("Streaming transcription",
                 prefs.getBoolean(SettingsDialog.KEY_WHISPER_STREAMING, false));
+        streamingToggle.setVisibility(isWhisper ? View.VISIBLE : View.GONE);
         body.addView(streamingToggle);
 
         TextView streamingWarning = new TextView(this);
@@ -404,7 +530,7 @@ public class SettingsActivity extends Activity {
         streamingWarning.setTextColor(0xFFFF9800);
         streamingWarning.setPadding(0, 0, 0, dp(8));
         streamingWarning.setVisibility(
-                prefs.getBoolean(SettingsDialog.KEY_WHISPER_STREAMING, false)
+                isWhisper && prefs.getBoolean(SettingsDialog.KEY_WHISPER_STREAMING, false)
                         ? View.VISIBLE : View.GONE);
         body.addView(streamingWarning);
 
@@ -413,13 +539,13 @@ public class SettingsActivity extends Activity {
             streamingWarning.setVisibility(checked ? View.VISIBLE : View.GONE);
         });
 
-        // Audio preprocessing toggle
+        // Audio preprocessing toggle (shared)
         CheckBox preprocessingToggle = makeCheckBox(
                 "Voice preprocessing (emphasis + normalize)",
                 prefs.getBoolean(SettingsDialog.KEY_AUDIO_PREPROCESSING, true));
         body.addView(preprocessingToggle);
 
-        // Audio Tuning button
+        // Audio Tuning button (shared)
         Button tuningBtn = makeActionButton("Audio Tuning...");
         tuningBtn.setEnabled(preprocessingToggle.isChecked());
         tuningBtn.setOnClickListener(v -> new AudioDebugDialog(this).show());
@@ -430,14 +556,17 @@ public class SettingsActivity extends Activity {
             tuningBtn.setEnabled(checked);
         });
 
-        // --- Advanced (collapsible) ---
-        body.addView(makeDivider());
+        // --- Advanced (whisper-only, collapsible) ---
+        View advancedDivider = makeDivider();
+        advancedDivider.setVisibility(isWhisper ? View.VISIBLE : View.GONE);
+        body.addView(advancedDivider);
 
         LinearLayout advancedContainer = new LinearLayout(this);
         advancedContainer.setOrientation(LinearLayout.VERTICAL);
         advancedContainer.setVisibility(View.GONE);
 
         Button advancedBtn = makeActionButton("Advanced...");
+        advancedBtn.setVisibility(isWhisper ? View.VISIBLE : View.GONE);
         advancedBtn.setOnClickListener(v -> {
             if (advancedContainer.getVisibility() == View.GONE) {
                 advancedContainer.setVisibility(View.VISIBLE);
@@ -549,6 +678,25 @@ public class SettingsActivity extends Activity {
         body.addView(advancedContainer);
 
         return body;
+    }
+
+    /** Show/hide whisper-specific controls in the Transcription section. */
+    private void updateTranscriptionVisibility(boolean isWhisper) {
+        if (whisperTranscriptionControls != null) {
+            whisperTranscriptionControls.setVisibility(isWhisper ? View.VISIBLE : View.GONE);
+        }
+        // Rebuild the transcription section to update visibility of individual controls
+        // This is triggered on engine change — simpler than tracking all individual views
+        if (sectionBodies[SECTION_TRANSCRIPTION] != null) {
+            int index = root.indexOfChild(sectionBodies[SECTION_TRANSCRIPTION]);
+            if (index >= 0) {
+                root.removeViewAt(index);
+                sectionBodies[SECTION_TRANSCRIPTION] = buildTranscriptionSection();
+                root.addView(sectionBodies[SECTION_TRANSCRIPTION], index);
+                sectionBodies[SECTION_TRANSCRIPTION].setVisibility(
+                        expandedSection == SECTION_TRANSCRIPTION ? View.VISIBLE : View.GONE);
+            }
+        }
     }
 
     // --- Section: Interface ---

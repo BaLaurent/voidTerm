@@ -89,7 +89,11 @@ dependencies {
     implementation project(':terminal-view')
     implementation project(':termux-shared')
     implementation 'androidx.annotation:annotation:1.7.1'
+    implementation 'androidx.core:core:1.12.0'
     implementation 'androidx.drawerlayout:drawerlayout:1.2.0'
+
+    // ONNX Runtime for Parakeet TDT v3 transcription engine
+    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.22.0'
 
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.mockito:mockito-core:5.11.0'

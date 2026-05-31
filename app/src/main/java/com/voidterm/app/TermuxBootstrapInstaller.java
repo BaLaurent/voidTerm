@@ -111,6 +111,7 @@ public class TermuxBootstrapInstaller {
         homeDir.mkdirs();
         Os.chmod(homeDir.getAbsolutePath(), 0700);
         createShellInitFiles(homeDir);
+        createProfileDRemap(stagingDir);
 
         // Step 8: Create tmp directory
         File tmpDir = new File(stagingDir, "tmp");
@@ -375,6 +376,7 @@ public class TermuxBootstrapInstaller {
                 "#!/data/data/com.voidterm/files/usr/bin/sh\n" +
                 "# Auto-patch newly installed packages: com.termux -> com.voidterm\n" +
                 "# Called by apt via DPkg::Post-Invoke after each install/upgrade.\n" +
+                "echo \"=== voidterm-patch $(date) ===\"\n" +
                 "INFODIR=\"/data/data/com.voidterm/files/usr/var/lib/dpkg/info\"\n" +
                 "\n" +
                 "patch_file() {\n" +
@@ -386,10 +388,24 @@ public class TermuxBootstrapInstaller {
                 "    case \"$magic\" in\n" +
                 "    7f454c46)\n" +
                 "        # ELF binary: same-length replacement (16 chars each)\n" +
-                "        # perl -pi handles binary data safely; skip if unavailable\n" +
-                "        command -v perl >/dev/null 2>&1 || return 0\n" +
-                "        perl -pi -e 's|com\\.termux/files|com.voidterm/fil|g;" +
+                "        if command -v perl >/dev/null 2>&1; then\n" +
+                "            perl -pi -e 's|com\\.termux/files|com.voidterm/fil|g;" +
                 "s|com\\.termux/cache|com.voidterm/cac|g' -- \"$f\" 2>/dev/null\n" +
+                "            echo \"patched ELF (perl): $f\"\n" +
+                "        else\n" +
+                "            # Fallback: sed with size guard (same-length = safe)\n" +
+                "            tmp=\"$f.voidpatch\"\n" +
+                "            if LC_ALL=C sed -e 's|com\\.termux/files|com.voidterm/fil|g' \\\n" +
+                "                           -e 's|com\\.termux/cache|com.voidterm/cac|g' \"$f\" > \"$tmp\" 2>/dev/null; then\n" +
+                "                if [ \"$(wc -c < \"$f\")\" = \"$(wc -c < \"$tmp\")\" ]; then\n" +
+                "                    cat \"$tmp\" > \"$f\"\n" +
+                "                    echo \"patched ELF (sed): $f\"\n" +
+                "                else\n" +
+                "                    echo \"WARN: sed size mismatch, skipped: $f\"\n" +
+                "                fi\n" +
+                "            fi\n" +
+                "            rm -f \"$tmp\"\n" +
+                "        fi\n" +
                 "        ;;\n" +
                 "    *)\n" +
                 "        # grep -I auto-skips binary files (archives, images, .pyc, etc.)\n" +
@@ -404,20 +420,27 @@ public class TermuxBootstrapInstaller {
                 "    [ -f \"$listfile\" ] || continue\n" +
                 "    find \"$listfile\" -mmin -2 2>/dev/null | grep -q . || continue\n" +
                 "    while IFS= read -r filepath; do\n" +
+                "        # Translate dpkg paths (com.termux) to real paths (com.voidterm)\n" +
+                "        filepath=$(echo \"$filepath\" | sed 's|/data/data/com.termux/|/data/data/com.voidterm/|g')\n" +
                 "        patch_file \"$filepath\"\n" +
                 "    done < \"$listfile\"\n" +
-                "done\n";
+                "done\n" +
+                "echo \"=== done ===\"\n";
         fos = new FileOutputStream(patchScript);
         fos.write(scriptContent.getBytes());
         fos.close();
         Os.chmod(patchScript.getAbsolutePath(), 0700);
 
+        // Create log directory for patcher diagnostics
+        new File(usrDir, "var/log").mkdirs();
+
         // Always use the FINAL prefix path (not staging) so apt finds the script
         // after staging dir is renamed to prefix during fresh install.
         String scriptFinalPath = new File(prefixDir, "lib/voidterm-patch-new.sh").getAbsolutePath();
+        String logPath = new File(prefixDir, "var/log/voidterm-patcher.log").getAbsolutePath();
         File aptPatchConf = new File(aptConfD, "99-voidterm-patcher.conf");
         String patchConfig = "DPkg::Post-Invoke { \"sh " + scriptFinalPath +
-                " 2>/dev/null || true\"; };\n";
+                " >> " + logPath + " 2>&1 || true\"; };\n";
         fos = new FileOutputStream(aptPatchConf);
         fos.write(patchConfig.getBytes());
         fos.close();
@@ -477,13 +500,32 @@ public class TermuxBootstrapInstaller {
         }
     }
 
+    /**
+     * Install a profile.d script that re-adds libvoidterm-remap.so to LD_PRELOAD.
+     * Sourced by ALL login shells after Termux profile overwrites LD_PRELOAD.
+     */
+    private void createProfileDRemap(File usrDir) throws Exception {
+        File profileD = new File(usrDir, "etc/profile.d");
+        profileD.mkdirs();
+        File script = new File(profileD, "voidterm-remap.sh");
+        String content =
+                "# VoidTerm: ensure path remap library stays in LD_PRELOAD\n" +
+                "case \"$LD_PRELOAD\" in\n" +
+                "    *libvoidterm-remap.so*) ;;\n" +
+                "    *) export LD_PRELOAD=\"${LD_PRELOAD:+$LD_PRELOAD:}$PREFIX/lib/libvoidterm-remap.so\" ;;\n" +
+                "esac\n";
+        writeTextFile(script, content);
+        Os.chmod(script.getAbsolutePath(), 0755);
+        Log.i(TAG, "Created profile.d remap script: " + script.getAbsolutePath());
+    }
+
     private void writeTextFile(File file, String content) throws IOException {
         FileOutputStream fos = new FileOutputStream(file);
         fos.write(content.getBytes());
         fos.close();
     }
 
-    private static final int PATCH_VERSION = 11;
+    private static final int PATCH_VERSION = 13;
 
     private static final String TERMUX_OLD_PKG = "com.termux";
     private static final String VOIDTERM_PKG = "com.voidterm";
@@ -696,6 +738,7 @@ public class TermuxBootstrapInstaller {
                 postProgress(callback, "Fixing apt config...", 70);
                 configureApt(prefixDir);
                 configureDpkg(prefixDir);
+                createProfileDRemap(prefixDir);
 
                 postProgress(callback, "Creating symlinks...", 80);
                 createFilSymlink();

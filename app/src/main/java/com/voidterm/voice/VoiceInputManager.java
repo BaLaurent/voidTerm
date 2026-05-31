@@ -30,7 +30,7 @@ import com.voidterm.contracts.VoiceState;
  * Editing -> Idle             : Enter (inject modified text)
  * Error -> Idle               : Dismiss (auto 3s)
  *
- * Coordinates AudioCapture, WhisperBridge, and TranscriptionOverlay.
+ * Coordinates AudioCapture, TranscriptionEngine, and TranscriptionOverlay.
  *
  * Thread safety: stateLock protects only the currentState field.
  * External calls (overlay, callback) are dispatched OUTSIDE the lock
@@ -41,13 +41,11 @@ public class VoiceInputManager implements TranscriptionListener {
     private static final String TAG = "VoiceInputManager";
     private static final long VOLUME_POLL_INTERVAL_MS = 100;
     private static final long ERROR_DISMISS_DELAY_MS = 3000;
-    private static final String DEFAULT_MODEL = SettingsDialog.DEFAULT_MODEL;
-
     private final TranscriptionOverlay overlay;
     private final VoiceInputCallback callback;
     private final AudioCapture audioCapture;
     private final Context appContext;
-    private volatile WhisperBridge whisperBridge;
+    private volatile TranscriptionEngine engine;
     private final Handler mainHandler;
 
     private final Object stateLock = new Object();
@@ -55,18 +53,8 @@ public class VoiceInputManager implements TranscriptionListener {
 
     private volatile boolean destroyed = false;
 
-    // Cached WhisperConfig — avoids 8 SharedPreferences reads per transcription
-    private volatile WhisperConfig cachedConfig;
     private volatile boolean preprocessingEnabled;
     private volatile AudioConfig cachedAudioConfig;
-
-    private static final Set<String> WHISPER_CONFIG_KEYS = new HashSet<>(Arrays.asList(
-            SettingsDialog.KEY_WHISPER_LANGUAGE, SettingsDialog.KEY_WHISPER_TRANSLATE,
-            SettingsDialog.KEY_WHISPER_INITIAL_PROMPT, SettingsDialog.KEY_WHISPER_TEMPERATURE,
-            SettingsDialog.KEY_WHISPER_BEAM_SEARCH, SettingsDialog.KEY_WHISPER_BEAM_SIZE,
-            SettingsDialog.KEY_WHISPER_THREAD_OVERRIDE, SettingsDialog.KEY_WHISPER_SUPPRESS_NON_SPEECH,
-            SettingsDialog.KEY_WHISPER_PROPORTIONAL_CONTEXT, SettingsDialog.KEY_WHISPER_STREAMING
-    ));
 
     private static final Set<String> AUDIO_CONFIG_KEYS = new HashSet<>(Arrays.asList(
             SettingsDialog.KEY_AUDIO_GAIN, SettingsDialog.KEY_AUDIO_PRE_EMPHASIS,
@@ -75,9 +63,6 @@ public class VoiceInputManager implements TranscriptionListener {
 
     private final SharedPreferences.OnSharedPreferenceChangeListener configInvalidator =
             (prefs, key) -> {
-                if (WHISPER_CONFIG_KEYS.contains(key)) {
-                    cachedConfig = null;
-                }
                 if (AUDIO_CONFIG_KEYS.contains(key)) {
                     cachedAudioConfig = null;
                 }
@@ -120,25 +105,22 @@ public class VoiceInputManager implements TranscriptionListener {
         this.appContext = context.getApplicationContext();
         this.mainHandler = new Handler(Looper.getMainLooper());
         this.audioCapture = new AudioCapture();
-        this.whisperBridge = new WhisperBridge();
 
         overlay.setTranscriptionListener(this);
 
         SharedPreferences prefs = context.getSharedPreferences(SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE);
         prefs.registerOnSharedPreferenceChangeListener(configInvalidator);
-        cachedConfig = readWhisperConfig(prefs);
         preprocessingEnabled = prefs.getBoolean(SettingsDialog.KEY_AUDIO_PREPROCESSING, true);
         cachedAudioConfig = readAudioConfig(prefs);
 
-        String modelName = prefs.getString(SettingsDialog.KEY_MODEL_NAME, DEFAULT_MODEL);
-        boolean useGpu = prefs.getBoolean(SettingsDialog.KEY_USE_GPU, false);
+        this.engine = createEngine(prefs);
 
         synchronized (stateLock) {
             currentState = VoiceState.LOADING;
         }
         dispatchStateChange(VoiceState.LOADING);
 
-        whisperBridge.loadModel(context, modelName, useGpu, createLoadCallback(modelName));
+        engine.loadModel(context, createLoadCallback());
     }
 
     /**
@@ -154,9 +136,9 @@ public class VoiceInputManager implements TranscriptionListener {
             }
 
             // Precondition checks INSIDE stateLock — only transition to RECORDING
-            // after both pass. whisperBridge.isModelLoaded() acquires contextLock
+            // after both pass. engine.isModelLoaded() acquires contextLock
             // internally; nesting stateLock->contextLock is safe (no reverse ordering).
-            if (!whisperBridge.isModelLoaded()) {
+            if (!engine.isModelLoaded()) {
                 Log.e(TAG, "PTT pressed but whisper model not loaded");
                 currentState = VoiceState.ERROR;
                 newState = VoiceState.ERROR;
@@ -176,7 +158,7 @@ public class VoiceInputManager implements TranscriptionListener {
         }
 
         if (newState == VoiceState.ERROR) {
-            String errorMsg = whisperBridge.isModelLoaded()
+            String errorMsg = engine.isModelLoaded()
                     ? "Microphone permission required"
                     : "Voice model not ready";
             overlay.showError(errorMsg);
@@ -191,7 +173,7 @@ public class VoiceInputManager implements TranscriptionListener {
 
     /**
      * Push-to-talk button released. Transitions from RECORDING to TRANSCRIBING.
-     * Stops audio capture and sends PCM data to WhisperBridge.
+     * Stops audio capture and sends PCM data to the transcription engine.
      */
     public void onPushToTalkReleased() {
         VoiceState newState = null;
@@ -206,8 +188,8 @@ public class VoiceInputManager implements TranscriptionListener {
         }
         dispatchStateChange(newState);
 
-        // Snapshot config before spawning thread (volatile read)
-        WhisperConfig config = buildWhisperConfig();
+        // Snapshot streaming flag before spawning thread
+        boolean streaming = (engine instanceof WhisperEngine) && ((WhisperEngine) engine).isStreaming();
 
         // Move stopRecording + transcribe off main thread — the main thread returns
         // immediately so the UI can show "Transcribing..." without waiting for the
@@ -220,8 +202,8 @@ public class VoiceInputManager implements TranscriptionListener {
                 }
                 float audioDurationSec = pcmData != null ? pcmData.length / (float) AudioCapture.SAMPLE_RATE : 0f;
 
-                // I10: Skip transcription for ultra-short recordings (< 0.5s)
-                // to avoid whisper hallucinations on near-empty audio
+                // Skip transcription for ultra-short recordings (< 0.5s)
+                // to avoid hallucinations on near-empty audio
                 if (audioDurationSec < 0.5f) {
                     Log.w(TAG, "Recording too short (" + String.format("%.2f", audioDurationSec) + "s), skipping transcription");
                     VoiceState errorState;
@@ -237,9 +219,9 @@ public class VoiceInputManager implements TranscriptionListener {
                     return;
                 }
 
-                // I1-voice: Re-check state before expensive transcription — a
-                // cancel (double-tap or onCancelRequested) may have moved us out
-                // of TRANSCRIBING while we were stopping/preprocessing audio.
+                // Re-check state before expensive transcription — a cancel
+                // (double-tap or onCancelRequested) may have moved us out of
+                // TRANSCRIBING while we were stopping/preprocessing audio.
                 synchronized (stateLock) {
                     if (currentState != VoiceState.TRANSCRIBING) {
                         Log.w(TAG, "Pipeline cancelled before transcribe() (state=" + currentState + ")");
@@ -249,13 +231,13 @@ public class VoiceInputManager implements TranscriptionListener {
 
                 long transcribeStart = System.currentTimeMillis();
                 final int[] streamingSentLength = {0};
-                whisperBridge.transcribe(pcmData, config, new WhisperBridge.Callback() {
+                engine.transcribe(pcmData, new TranscriptionEngine.Callback() {
                     @Override
                     public void onSuccess(String text) {
                         long processingTimeMs = System.currentTimeMillis() - transcribeStart;
                         VoiceState newState = null;
 
-                        if (config.streaming) {
+                        if (streaming) {
                             // Send any remaining delta directly to terminal
                             if (text.length() > streamingSentLength[0]) {
                                 callback.onVoiceTextReady(text.substring(streamingSentLength[0]));
@@ -308,7 +290,7 @@ public class VoiceInputManager implements TranscriptionListener {
                             currentState = VoiceState.ERROR;
                             newState = VoiceState.ERROR;
                         }
-                        String logs = whisperBridge.getAndClearLogs();
+                        String logs = engine.getAndClearLogs();
                         overlay.showError(error, logs);
                         dispatchStateChange(newState);
                         // No auto-dismiss when logs are available — user dismisses manually
@@ -361,12 +343,12 @@ public class VoiceInputManager implements TranscriptionListener {
     }
 
     /**
-     * Reload whisper model with a different file.
-     * Releases the current model and loads the new one.
+     * Reload the transcription engine. Releases the current engine,
+     * creates a new one based on settings, and loads its model.
      */
-    public void reloadModel(Context context, String modelFileName) {
+    public void reloadModel(Context context) {
         // Reject if voice pipeline is active — release()+new is not atomic and a
-        // pipeline thread could call transcribe() on the released bridge.
+        // pipeline thread could call transcribe() on the released engine.
         synchronized (stateLock) {
             if (currentState != VoiceState.IDLE && currentState != VoiceState.ERROR) {
                 Log.w(TAG, "Cannot reload model in " + currentState + " state");
@@ -374,31 +356,19 @@ public class VoiceInputManager implements TranscriptionListener {
             }
         }
 
-        whisperBridge.release();
-        whisperBridge = new WhisperBridge();
-        // Stale mainHandler callbacks (from old bridge's loadModel or profiling) are
+        engine.release();
+        SharedPreferences prefs = context.getSharedPreferences(SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE);
+        engine = createEngine(prefs);
+        // Stale mainHandler callbacks (from old engine's loadModel or profiling) are
         // safe: they check currentState under stateLock before acting, and will see
         // LOADING (which discards stale IDLE transitions from the old callback).
-
-        SharedPreferences prefs = context.getSharedPreferences(SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE);
-        boolean useGpu = prefs.getBoolean(SettingsDialog.KEY_USE_GPU, false);
 
         synchronized (stateLock) {
             currentState = VoiceState.LOADING;
         }
         dispatchStateChange(VoiceState.LOADING);
 
-        whisperBridge.loadModel(context, modelFileName, useGpu, createLoadCallback(modelFileName));
-    }
-
-    private WhisperConfig buildWhisperConfig() {
-        WhisperConfig config = cachedConfig;
-        if (config != null) return config;
-
-        SharedPreferences prefs = appContext.getSharedPreferences(SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE);
-        config = readWhisperConfig(prefs);
-        cachedConfig = config;
-        return config;
+        engine.loadModel(context, createLoadCallback());
     }
 
     private AudioConfig buildAudioConfig() {
@@ -420,64 +390,63 @@ public class VoiceInputManager implements TranscriptionListener {
         );
     }
 
-    private static WhisperConfig readWhisperConfig(SharedPreferences prefs) {
-        return new WhisperConfig(
-                prefs.getString(SettingsDialog.KEY_WHISPER_LANGUAGE, "en"),
-                prefs.getBoolean(SettingsDialog.KEY_WHISPER_TRANSLATE, false),
-                prefs.getString(SettingsDialog.KEY_WHISPER_INITIAL_PROMPT, ""),
-                prefs.getFloat(SettingsDialog.KEY_WHISPER_TEMPERATURE, 0.0f),
-                prefs.getBoolean(SettingsDialog.KEY_WHISPER_BEAM_SEARCH, false),
-                prefs.getInt(SettingsDialog.KEY_WHISPER_BEAM_SIZE, 5),
-                prefs.getInt(SettingsDialog.KEY_WHISPER_THREAD_OVERRIDE, 0),
-                prefs.getBoolean(SettingsDialog.KEY_WHISPER_SUPPRESS_NON_SPEECH, false),
-                prefs.getBoolean(SettingsDialog.KEY_WHISPER_PROPORTIONAL_CONTEXT, false),
-                prefs.getBoolean(SettingsDialog.KEY_WHISPER_STREAMING, false)
-        );
+    private TranscriptionEngine createEngine(SharedPreferences prefs) {
+        String type = prefs.getString(SettingsDialog.KEY_TRANSCRIPTION_ENGINE, SettingsDialog.ENGINE_WHISPER);
+        if (SettingsDialog.ENGINE_PARAKEET.equals(type)) {
+            return new ParakeetEngine(prefs);
+        }
+        return new WhisperEngine(prefs);
     }
 
-    private WhisperBridge.Callback createLoadCallback(String modelName) {
-        return new WhisperBridge.Callback() {
+    private TranscriptionEngine.Callback createLoadCallback() {
+        return new TranscriptionEngine.Callback() {
             @Override
             public void onSuccess(String result) {
-                Log.i(TAG, "Whisper model loaded: " + result);
+                Log.i(TAG, "Model loaded: " + result);
 
-                SharedPreferences prefs = appContext.getSharedPreferences(SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE);
-                DeviceProfiler.migrateIfNeeded(prefs);
+                // DeviceProfiler is whisper-specific — only run for WhisperEngine
+                if (engine instanceof WhisperEngine) {
+                    WhisperEngine whisperEngine = (WhisperEngine) engine;
+                    String modelName = whisperEngine.getModelName();
+                    SharedPreferences prefs = appContext.getSharedPreferences(SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE);
+                    DeviceProfiler.migrateIfNeeded(prefs);
 
-                if (DeviceProfiler.needsProfiling(prefs, modelName)) {
-                    overlay.setLoadingProgress("Optimizing...", 95);
-                    new Thread(() -> {
-                        int threadCount = CpuInfo.getPreferredThreadCount();
-                        DeviceProfiler.Result profResult = DeviceProfiler.profile(whisperBridge, threadCount);
-                        if (profResult != null) {
-                            DeviceProfiler.applyDefaults(prefs, modelName, profResult);
-                            cachedConfig = null;
-                        } else {
-                            Log.w(TAG, "Profiling failed, keeping existing settings");
-                        }
-                        mainHandler.post(() -> {
-                            VoiceState newState;
-                            synchronized (stateLock) {
-                                currentState = VoiceState.IDLE;
-                                newState = VoiceState.IDLE;
+                    if (DeviceProfiler.needsProfiling(prefs, modelName)) {
+                        overlay.setLoadingProgress("Optimizing...", 95);
+                        new Thread(() -> {
+                            int threadCount = CpuInfo.getPreferredThreadCount();
+                            DeviceProfiler.Result profResult = DeviceProfiler.profile(whisperEngine.getBridge(), threadCount);
+                            if (profResult != null) {
+                                DeviceProfiler.applyDefaults(prefs, modelName, profResult);
+                                whisperEngine.invalidateConfig();
+                            } else {
+                                Log.w(TAG, "Profiling failed, keeping existing settings");
                             }
-                            dispatchStateChange(newState);
-                        });
-                    }, "DeviceProfiler").start();
-                } else {
-                    Log.i(TAG, "Auto-tune cache hit for " + modelName);
-                    VoiceState newState;
-                    synchronized (stateLock) {
-                        currentState = VoiceState.IDLE;
-                        newState = VoiceState.IDLE;
+                            mainHandler.post(() -> {
+                                VoiceState newState;
+                                synchronized (stateLock) {
+                                    currentState = VoiceState.IDLE;
+                                    newState = VoiceState.IDLE;
+                                }
+                                dispatchStateChange(newState);
+                            });
+                        }, "DeviceProfiler").start();
+                        return;
                     }
-                    dispatchStateChange(newState);
+                    Log.i(TAG, "Auto-tune cache hit for " + modelName);
                 }
+
+                VoiceState newState;
+                synchronized (stateLock) {
+                    currentState = VoiceState.IDLE;
+                    newState = VoiceState.IDLE;
+                }
+                dispatchStateChange(newState);
             }
 
             @Override
             public void onError(String error) {
-                Log.e(TAG, "Failed to load whisper model: " + error);
+                Log.e(TAG, "Failed to load model: " + error);
                 VoiceState newState;
                 synchronized (stateLock) {
                     currentState = VoiceState.ERROR;
@@ -505,7 +474,7 @@ public class VoiceInputManager implements TranscriptionListener {
         appContext.getSharedPreferences(SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE)
                 .unregisterOnSharedPreferenceChangeListener(configInvalidator);
         audioCapture.release();
-        whisperBridge.release();
+        engine.release();
         Log.i(TAG, "VoiceInputManager destroyed");
     }
 
@@ -549,7 +518,7 @@ public class VoiceInputManager implements TranscriptionListener {
         // When cancelling during transcription, abort native computation early
         // and let the state guard in the callback discard the stale result.
         if (wasTranscribing) {
-            whisperBridge.abort();
+            engine.abort();
         }
         dispatchStateChange(newState);
     }

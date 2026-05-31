@@ -3,13 +3,16 @@ package com.voidterm.app;
 import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.ServiceConnection;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.os.Bundle;
+import android.os.IBinder;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.ContextMenu;
@@ -53,6 +56,8 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
 
     private TerminalView terminalView;
     private SessionManager sessionManager;
+    private TerminalService terminalService;
+    private boolean serviceBound;
     private TermuxTerminalSessionClient sessionClient;
     private VoidTermTerminalViewClient viewClient;
 
@@ -78,6 +83,72 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
     private LinearLayout installProgressView;
     private ProgressBar installProgressBar;
     private TextView installStatusText;
+
+    private final ServiceConnection serviceConnection = new ServiceConnection() {
+        @Override
+        public void onServiceConnected(ComponentName name, IBinder service) {
+            TerminalService.LocalBinder binder = (TerminalService.LocalBinder) service;
+            terminalService = binder.getService();
+            serviceBound = true;
+            sessionManager = terminalService.getSessionManager();
+            setupSessionManagerListener();
+
+            if (sessionManager.getSessionCount() > 0) {
+                // Re-attaching to existing sessions (returning from background)
+                for (TerminalSession session : sessionManager.getSessions()) {
+                    session.updateTerminalSessionClient(sessionClient);
+                }
+                TerminalSession current = sessionManager.getCurrentSession();
+                if (current != null) {
+                    sessionClient.setSession(current);
+                    terminalView.attachSession(current);
+                }
+                if (sessionListAdapter != null) {
+                    sessionListAdapter.update(
+                            sessionManager.getSessions(),
+                            sessionManager.getCurrentIndex());
+                }
+                if (voiceInputManager == null) {
+                    initVoiceInput();
+                    initQuestInput();
+                    initExtraKeys();
+                }
+            } else {
+                // First launch — proceed with bootstrap check
+                if (bootstrapInstaller.isInstalled()) {
+                    onBootstrapReady();
+                } else {
+                    showInstallProgress();
+                    bootstrapInstaller.install(new TermuxBootstrapInstaller.BootstrapCallback() {
+                        @Override
+                        public void onProgressUpdate(String message, int percent) {
+                            if (isDestroyed()) return;
+                            updateInstallProgress(message, percent);
+                        }
+
+                        @Override
+                        public void onInstallComplete() {
+                            if (isDestroyed()) return;
+                            hideInstallProgress();
+                            onBootstrapReady();
+                        }
+
+                        @Override
+                        public void onInstallFailed(String error) {
+                            if (isDestroyed()) return;
+                            showInstallError(error);
+                        }
+                    });
+                }
+            }
+        }
+
+        @Override
+        public void onServiceDisconnected(ComponentName name) {
+            terminalService = null;
+            serviceBound = false;
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -141,38 +212,6 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         // Control panels (GameBoy, Compact, CompactToolbar)
         panelController = new PanelController(this, rootLayout, this);
 
-        // SessionManager
-        sessionManager = new SessionManager();
-        sessionManager.setListener(new SessionManager.SessionChangeListener() {
-            @Override
-            public void onSessionSwitched(TerminalSession session) {
-                sessionClient.setSession(session);
-                terminalView.attachSession(session);
-                session.updateTerminalSessionClient(sessionClient);
-            }
-
-            @Override
-            public void onSessionAdded(TerminalSession session) {
-                sessionClient.setSession(session);
-                terminalView.attachSession(session);
-                session.updateTerminalSessionClient(sessionClient);
-            }
-
-            @Override
-            public void onSessionRemoved(TerminalSession removed, TerminalSession switchedTo) {
-                // If no sessions left, createNewSession() will be called by the caller
-            }
-
-            @Override
-            public void onSessionListChanged() {
-                if (sessionListAdapter != null) {
-                    sessionListAdapter.update(
-                            sessionManager.getSessions(),
-                            sessionManager.getCurrentIndex());
-                }
-            }
-        });
-
         // Wrap rootLayout in DrawerLayout
         drawerLayout = new DrawerLayout(this);
         drawerLayout.addView(rootLayout, new DrawerLayout.LayoutParams(
@@ -205,34 +244,44 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         // Apply initial panel visibility (respects fullscreen mode preference)
         updatePanelVisibility();
 
-        // Check if bootstrap is installed, install if needed
+        // Bootstrap installer (checks if Termux environment needs install/repatch)
         bootstrapInstaller = new TermuxBootstrapInstaller(getFilesDir());
 
-        if (bootstrapInstaller.isInstalled()) {
-            onBootstrapReady();
-        } else {
-            showInstallProgress();
-            bootstrapInstaller.install(new TermuxBootstrapInstaller.BootstrapCallback() {
-                @Override
-                public void onProgressUpdate(String message, int percent) {
-                    if (isDestroyed()) return;
-                    updateInstallProgress(message, percent);
-                }
+        // Start and bind TerminalService — owns sessions, survives Activity destruction
+        Intent serviceIntent = new Intent(this, TerminalService.class);
+        startForegroundService(serviceIntent);
+        bindService(serviceIntent, serviceConnection, BIND_AUTO_CREATE);
+    }
 
-                @Override
-                public void onInstallComplete() {
-                    if (isDestroyed()) return;
-                    hideInstallProgress();
-                    onBootstrapReady();
-                }
+    private void setupSessionManagerListener() {
+        sessionManager.setListener(new SessionManager.SessionChangeListener() {
+            @Override
+            public void onSessionSwitched(TerminalSession session) {
+                sessionClient.setSession(session);
+                terminalView.attachSession(session);
+                session.updateTerminalSessionClient(sessionClient);
+            }
 
-                @Override
-                public void onInstallFailed(String error) {
-                    if (isDestroyed()) return;
-                    showInstallError(error);
+            @Override
+            public void onSessionAdded(TerminalSession session) {
+                sessionClient.setSession(session);
+                terminalView.attachSession(session);
+                session.updateTerminalSessionClient(sessionClient);
+            }
+
+            @Override
+            public void onSessionRemoved(TerminalSession removed, TerminalSession switchedTo) {
+            }
+
+            @Override
+            public void onSessionListChanged() {
+                if (sessionListAdapter != null) {
+                    sessionListAdapter.update(
+                            sessionManager.getSessions(),
+                            sessionManager.getCurrentIndex());
                 }
-            });
-        }
+            }
+        });
     }
 
     /**
@@ -240,6 +289,7 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
      * SessionManager listener handles attachSession/setSession.
      */
     private void createNewSession() {
+        if (sessionManager == null) return;
         try {
             String filesDir = getFilesDir().getAbsolutePath();
             String prefix = filesDir + "/usr";
@@ -248,6 +298,7 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
             // Ensure libvoidterm-remap.so is available at $PREFIX/lib/ and .bashrc keeps it loaded
             copyRemapLibrary(prefix);
             ensureBashrcRemap(home, prefix);
+            ensureProfileDRemap(prefix);
 
             // Select shell: prefer bash > sh fallback
             // NOTE: skip "login" — it's a script with shebang #!/data/data/com.termux/...
@@ -275,6 +326,9 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
 
             Log.i(TAG, "Terminal session created: " + session.mSessionName
                     + " shell=" + shell + " home=" + home);
+            if (terminalService != null) {
+                terminalService.updateNotification();
+            }
         } catch (Exception e) {
             Log.e(TAG, "Failed to create terminal session", e);
             if (diagnosticLog != null) {
@@ -322,9 +376,18 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         File dst = new File(dstDir, "libvoidterm-remap.so");
         if (!src.exists()) {
             Log.w(TAG, "libvoidterm-remap.so not found in nativeLibraryDir: " + nativeDir);
+            File[] files = new File(nativeDir).listFiles();
+            if (files != null) {
+                for (File f : files) {
+                    Log.w(TAG, "  native lib: " + f.getName() + " (" + f.length() + " bytes)");
+                }
+            } else {
+                Log.w(TAG, "  nativeLibraryDir is empty or inaccessible");
+            }
             return;
         }
-        if (dst.exists() && dst.length() == src.length()) return;
+        if (dst.exists() && dst.length() == src.length()
+                && dst.lastModified() >= src.lastModified()) return;
         dstDir.mkdirs();
         try (FileInputStream in = new FileInputStream(src);
              FileOutputStream out = new FileOutputStream(dst)) {
@@ -373,6 +436,38 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
             Log.i(TAG, "Patched .bashrc with LD_PRELOAD remap snippet");
         } catch (Exception e) {
             Log.e(TAG, "Failed to patch .bashrc", e);
+        }
+    }
+
+    /**
+     * Install a profile.d script that re-adds libvoidterm-remap.so to LD_PRELOAD.
+     * Unlike .bashrc (interactive bash only), profile.d is sourced by ALL login shells
+     * AFTER Termux profile overwrites LD_PRELOAD with libtermux-exec.so.
+     */
+    private void ensureProfileDRemap(String prefix) {
+        File profileD = new File(prefix, "etc/profile.d");
+        profileD.mkdirs();
+        File script = new File(profileD, "voidterm-remap.sh");
+        String content =
+                "# VoidTerm: ensure path remap library stays in LD_PRELOAD\n" +
+                "case \"$LD_PRELOAD\" in\n" +
+                "    *libvoidterm-remap.so*) ;;\n" +
+                "    *) export LD_PRELOAD=\"${LD_PRELOAD:+$LD_PRELOAD:}$PREFIX/lib/libvoidterm-remap.so\" ;;\n" +
+                "esac\n";
+        try {
+            if (script.exists()) {
+                byte[] existing = new byte[(int) script.length()];
+                try (FileInputStream fis = new FileInputStream(script)) { fis.read(existing); }
+                if (new String(existing).contains("libvoidterm-remap.so")) return;
+            }
+            try (FileOutputStream fos = new FileOutputStream(script)) {
+                fos.write(content.getBytes());
+            }
+            script.setReadable(true, false);
+            script.setExecutable(true, false);
+            Log.i(TAG, "Created profile.d remap script: " + script.getAbsolutePath());
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to create profile.d remap script", e);
         }
     }
 
@@ -686,9 +781,7 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
 
     private void reloadCurrentModel() {
         if (voiceInputManager != null) {
-            SharedPreferences prefs = getSharedPreferences(SettingsDialog.PREFS_NAME, MODE_PRIVATE);
-            String modelName = prefs.getString(SettingsDialog.KEY_MODEL_NAME, SettingsDialog.DEFAULT_MODEL);
-            voiceInputManager.reloadModel(this, modelName);
+            voiceInputManager.reloadModel(this);
         }
     }
 
@@ -916,12 +1009,14 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         sessionListAdapter = new SessionListAdapter(this, new SessionListAdapter.SessionListCallback() {
             @Override
             public void onSessionTapped(int index) {
+                if (sessionManager == null) return;
                 sessionManager.switchToSession(index);
                 drawerLayout.closeDrawers();
             }
 
             @Override
             public void onSessionCloseRequested(int index) {
+                if (sessionManager == null) return;
                 if (index >= 0 && index < sessionManager.getSessionCount()) {
                     TerminalSession toRemove = sessionManager.getSessions().get(index);
                     TerminalSession next = sessionManager.removeSession(toRemove);
@@ -971,6 +1066,9 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         if (sessionManager == null) return;
         runOnUiThread(() -> {
             TerminalSession next = sessionManager.removeSession(finishedSession);
+            if (terminalService != null) {
+                terminalService.updateNotification();
+            }
             if (next == null) {
                 createNewSession();
             }
@@ -1047,8 +1145,17 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
             voiceInputManager.destroy();
             voiceInputManager = null;
         }
+        // Detach from service — sessions survive in TerminalService with HeadlessSessionClient
+        if (terminalService != null) {
+            terminalService.detachActivity();
+        }
         if (sessionManager != null) {
-            sessionManager.finishAllSessions();
+            sessionManager.setListener(null);
+            sessionManager = null;
+        }
+        if (serviceBound) {
+            unbindService(serviceConnection);
+            serviceBound = false;
         }
         Log.i(TAG, "VoidTerm destroyed");
     }

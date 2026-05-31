@@ -65,6 +65,7 @@ public class TermuxTerminalSessionClient implements TerminalSessionClient {
     @Override
     public void onTextChanged(@NonNull TerminalSession changedSession) {
         if (changedSession != currentSession) return;
+        if (activity.isDestroyed()) return;
         activity.runOnUiThread(() -> {
             if (activity.getTerminalView() != null) {
                 activity.getTerminalView().onScreenUpdated();
@@ -83,11 +84,13 @@ public class TermuxTerminalSessionClient implements TerminalSessionClient {
         if (diagnosticLog != null) {
             diagnosticLog.warn(TAG, "Terminal session finished: " + finishedSession.mSessionName);
         }
+        if (activity.isDestroyed()) return;
         activity.onSessionFinished(finishedSession);
     }
 
     @Override
     public void onCopyTextToClipboard(@NonNull TerminalSession session, String text) {
+        if (activity.isDestroyed()) return;
         ClipboardManager clipboard = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
         if (clipboard != null) {
             clipboard.setPrimaryClip(new ClipData("VoidTerm", new String[]{"text/plain"}, new ClipData.Item(text)));
@@ -96,6 +99,7 @@ public class TermuxTerminalSessionClient implements TerminalSessionClient {
 
     @Override
     public void onPasteTextFromClipboard(@Nullable TerminalSession session) {
+        if (activity.isDestroyed()) return;
         activity.pasteFromClipboard();
     }
 
@@ -107,6 +111,7 @@ public class TermuxTerminalSessionClient implements TerminalSessionClient {
     @Override
     public void onColorsChanged(@NonNull TerminalSession changedSession) {
         if (changedSession != currentSession) return;
+        if (activity.isDestroyed()) return;
         activity.runOnUiThread(() -> {
             if (activity.getTerminalView() != null) {
                 activity.getTerminalView().onScreenUpdated();
