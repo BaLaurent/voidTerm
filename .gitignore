@@ -30,3 +30,8 @@ licenses/
 
 # Whisper model files (large binaries)
 *.bin
+
+# Release signing — SECRETS, never commit. Back these up securely.
+keystore.properties
+*.keystore
+*.jks
