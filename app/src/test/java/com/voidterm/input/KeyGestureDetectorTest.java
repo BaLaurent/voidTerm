@@ -90,4 +90,47 @@ public class KeyGestureDetectorTest {
         scheduler.advance(1000);
         assertEquals(0, events.size()); // nothing fired after reset
     }
+
+    private void tap(int keyCode) {
+        detector.onKeyDown(keyCode, ev(0));
+        detector.onKeyUp(keyCode, ev(0));
+    }
+
+    @Test
+    public void singleArmed_emitsSingleAfterWindow() {
+        armVolUp(Gesture.DOUBLE); // double armed -> single must wait
+        tap(KeyEvent.KEYCODE_VOLUME_UP);
+        assertEquals(0, events.size());            // waiting for a possible 2nd tap
+        scheduler.advance(GestureTiming.NORMAL.multiTapWindowMs);
+        assertEquals(1, events.size());
+        assertEquals("VOL_UP:SINGLE", events.get(0));
+    }
+
+    @Test
+    public void doubleTap_emitsDoubleImmediatelyAtMax() {
+        armVolUp(Gesture.DOUBLE);
+        tap(KeyEvent.KEYCODE_VOLUME_UP);
+        tap(KeyEvent.KEYCODE_VOLUME_UP);
+        assertEquals(1, events.size());            // max reached -> immediate
+        assertEquals("VOL_UP:DOUBLE", events.get(0));
+    }
+
+    @Test
+    public void tripleTap_emitsTriple() {
+        armVolUp(Gesture.DOUBLE, Gesture.TRIPLE);
+        tap(KeyEvent.KEYCODE_VOLUME_UP);
+        tap(KeyEvent.KEYCODE_VOLUME_UP);
+        tap(KeyEvent.KEYCODE_VOLUME_UP);
+        assertEquals(1, events.size());
+        assertEquals("VOL_UP:TRIPLE", events.get(0));
+    }
+
+    @Test
+    public void doubleArmed_singleThenWait_emitsSingleOnly() {
+        armVolUp(Gesture.DOUBLE);
+        tap(KeyEvent.KEYCODE_VOLUME_UP);
+        scheduler.advance(GestureTiming.NORMAL.multiTapWindowMs);
+        assertEquals(1, events.size());
+        assertEquals("VOL_UP:SINGLE", events.get(0));
+    }
 }

@@ -130,11 +130,41 @@ public final class KeyGestureDetector {
         listener.onGesture(k, g);
     }
 
-    // Bodies implemented in Tasks 4-6.
     private void handleDown(KeyId k) {
+        beginKeyPress(k);
     }
 
     private void handleUp(KeyId k) {
+        endKeyPress(k);
+    }
+
+    private void beginKeyPress(KeyId k) {
+        KeyState s = keyStates.get(k);
+        s.down = true;
+        s.longFired = false;
+        scheduler.cancel(s.multiTapToken); // continuing a tap sequence
+        s.multiTapToken = null;
+        // long-press timer added in Task 5
+    }
+
+    private void endKeyPress(KeyId k) {
+        KeyState s = keyStates.get(k);
+        s.down = false;
+        if (s.longFired) { s.longFired = false; return; }
+        scheduler.cancel(s.longToken);
+        s.longToken = null;
+        s.tapCount++;
+        if (s.tapCount >= maxArmedTaps(k)) {
+            emitTap(k, s.tapCount);
+            s.tapCount = 0;
+        } else {
+            final int snapshot = s.tapCount;
+            s.multiTapToken = scheduler.postDelayed(() -> {
+                emitTap(k, snapshot);
+                s.tapCount = 0;
+                s.multiTapToken = null;
+            }, timing.multiTapWindowMs);
+        }
     }
 
     private static final class KeyState {
