@@ -54,6 +54,45 @@ public final class SettingsDialog {
     public static final String KEY_VOLUME_UP_MACRO = "volume_up_macro";
     public static final String KEY_VOLUME_DOWN_MACRO = "volume_down_macro";
     public static final String VOLUME_DEFAULT = "default";
+
+    // --- Key gesture slots (multi-tap / long / combo) ---
+    // Single-tap reuses the existing keys above; "default" sentinel reuses VOLUME_DEFAULT.
+    public static final String KEY_GESTURE_TIMING_PRESET = "gesture_timing_preset";
+    public static final String PRESET_FAST = "fast";
+    public static final String PRESET_NORMAL = "normal";
+    public static final String PRESET_SLOW = "slow";
+
+    public static final String KEY_VOLUP_DOUBLE = "gesture_volup_double";
+    public static final String KEY_VOLUP_TRIPLE = "gesture_volup_triple";
+    public static final String KEY_VOLUP_LONG = "gesture_volup_long";
+    public static final String KEY_VOLUP_DOUBLE_MACRO = "gesture_volup_double_macro";
+    public static final String KEY_VOLUP_TRIPLE_MACRO = "gesture_volup_triple_macro";
+    public static final String KEY_VOLUP_LONG_MACRO = "gesture_volup_long_macro";
+
+    public static final String KEY_VOLDOWN_DOUBLE = "gesture_voldown_double";
+    public static final String KEY_VOLDOWN_TRIPLE = "gesture_voldown_triple";
+    public static final String KEY_VOLDOWN_LONG = "gesture_voldown_long";
+    public static final String KEY_VOLDOWN_DOUBLE_MACRO = "gesture_voldown_double_macro";
+    public static final String KEY_VOLDOWN_TRIPLE_MACRO = "gesture_voldown_triple_macro";
+    public static final String KEY_VOLDOWN_LONG_MACRO = "gesture_voldown_long_macro";
+
+    public static final String KEY_BACK_DOUBLE = "gesture_back_double";
+    public static final String KEY_BACK_TRIPLE = "gesture_back_triple";
+    public static final String KEY_BACK_LONG = "gesture_back_long";
+    public static final String KEY_BACK_DOUBLE_MACRO = "gesture_back_double_macro";
+    public static final String KEY_BACK_TRIPLE_MACRO = "gesture_back_triple_macro";
+    public static final String KEY_BACK_LONG_MACRO = "gesture_back_long_macro";
+
+    public static final String KEY_COMBO_SINGLE = "gesture_combo_single";
+    public static final String KEY_COMBO_DOUBLE = "gesture_combo_double";
+    public static final String KEY_COMBO_TRIPLE = "gesture_combo_triple";
+    public static final String KEY_COMBO_SINGLE_MACRO = "gesture_combo_single_macro";
+    public static final String KEY_COMBO_DOUBLE_MACRO = "gesture_combo_double_macro";
+    public static final String KEY_COMBO_TRIPLE_MACRO = "gesture_combo_triple_macro";
+
+    public static final String[] GESTURE_PRESET_LABELS = {"Reactif", "Normal", "Tolerant"};
+    public static final String[] GESTURE_PRESET_VALUES = {PRESET_FAST, PRESET_NORMAL, PRESET_SLOW};
+
     public static final String DEFAULT_MODEL = "ggml-base.bin";
     public static final int REQUEST_MODEL_FILE = 1001;
     public static final String KEY_MODEL_RELOAD_REQUESTED = "model_reload_requested";
