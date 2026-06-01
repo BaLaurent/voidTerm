@@ -132,7 +132,7 @@ public final class KeyGestureDetector {
 
     private void handleDown(KeyId k) {
         if ((k == KeyId.VOL_UP || k == KeyId.VOL_DOWN) && comboArmed()) {
-            handleVolumeDownWithCombo(k);
+            handleComboKeyPress(k);
         } else {
             beginKeyPress(k);
         }
@@ -142,7 +142,7 @@ public final class KeyGestureDetector {
         KeyState s = keyStates.get(k);
         if ((k == KeyId.VOL_UP || k == KeyId.VOL_DOWN) && comboArmed()
                 && (s.comboPending || comboEngaged)) {
-            handleVolumeUpWithCombo(k);
+            handleComboKeyRelease(k);
         } else {
             endKeyPress(k);
         }
@@ -171,7 +171,7 @@ public final class KeyGestureDetector {
         return (k == KeyId.VOL_UP) ? KeyId.VOL_DOWN : KeyId.VOL_UP;
     }
 
-    private void handleVolumeDownWithCombo(KeyId k) {
+    private void handleComboKeyPress(KeyId k) {
         KeyState s = keyStates.get(k);
         KeyState os = keyStates.get(otherVolume(k));
         s.down = true;
@@ -191,6 +191,7 @@ public final class KeyGestureDetector {
         }
 
         // open a combo window for this key
+        scheduler.cancel(comboWindowToken); // guard against rapid same-key re-press
         s.comboPending = true;
         comboWindowToken = scheduler.postDelayed(() -> promoteToIndividual(k), timing.comboWindowMs);
     }
@@ -210,7 +211,7 @@ public final class KeyGestureDetector {
         }
     }
 
-    private void handleVolumeUpWithCombo(KeyId k) {
+    private void handleComboKeyRelease(KeyId k) {
         KeyState s = keyStates.get(k);
         s.down = false;
 

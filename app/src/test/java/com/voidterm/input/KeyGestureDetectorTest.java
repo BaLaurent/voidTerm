@@ -227,4 +227,25 @@ public class KeyGestureDetectorTest {
         assertEquals(1, events.size());
         assertEquals("VOL_DOWN:SINGLE", events.get(0));
     }
+
+    @Test
+    public void combo_rapidSameKeyRepressWithinWindow_noGhostEvent() {
+        // COMBO armed + VOL_UP has its own double-tap. Two presses of VOL_UP, each
+        // released inside the combo window, with NO partner. Before the token-leak
+        // fix this fired a spurious extra event; now it must resolve to a single,
+        // clean event.
+        Map<KeyId, EnumSet<Gesture>> armed = new EnumMap<>(KeyId.class);
+        armed.put(KeyId.COMBO, EnumSet.of(Gesture.SINGLE));
+        armed.put(KeyId.VOL_UP, EnumSet.of(Gesture.DOUBLE));
+        detector.setArmed(armed);
+
+        detector.onKeyDown(KeyEvent.KEYCODE_VOLUME_UP, ev(0));
+        detector.onKeyUp(KeyEvent.KEYCODE_VOLUME_UP, ev(0));     // released inside window
+        detector.onKeyDown(KeyEvent.KEYCODE_VOLUME_UP, ev(0));   // re-press (cancels prior window)
+        detector.onKeyUp(KeyEvent.KEYCODE_VOLUME_UP, ev(0));     // released inside window
+        scheduler.advance(GestureTiming.NORMAL.comboWindowMs);
+        scheduler.advance(GestureTiming.NORMAL.multiTapWindowMs);
+        assertEquals(1, events.size());                          // exactly one, no ghost
+        assertEquals("VOL_UP:SINGLE", events.get(0));
+    }
 }
