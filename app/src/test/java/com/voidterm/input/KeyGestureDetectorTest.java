@@ -248,4 +248,20 @@ public class KeyGestureDetectorTest {
         assertEquals(1, events.size());                          // exactly one, no ghost
         assertEquals("VOL_UP:SINGLE", events.get(0));
     }
+
+    @Test
+    public void armedBack_consumesDownAndUp() {
+        Map<KeyId, EnumSet<Gesture>> armed = new EnumMap<>(KeyId.class);
+        armed.put(KeyId.BACK, EnumSet.of(Gesture.DOUBLE));
+        detector.setArmed(armed);
+        assertTrue(detector.onKeyDown(KeyEvent.KEYCODE_BACK, ev(0)));
+        assertTrue(detector.onKeyUp(KeyEvent.KEYCODE_BACK, ev(0)));
+    }
+
+    @Test
+    public void notArmedBack_passesThrough() {
+        detector.setArmed(new EnumMap<>(KeyId.class));
+        assertFalse(detector.onKeyDown(KeyEvent.KEYCODE_BACK, ev(0)));
+        assertFalse(detector.onKeyUp(KeyEvent.KEYCODE_BACK, ev(0)));
+    }
 }
