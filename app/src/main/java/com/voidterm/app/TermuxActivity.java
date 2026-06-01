@@ -747,6 +747,8 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
                 prefs.getString(SettingsDialog.KEY_GESTURE_TIMING_PRESET, SettingsDialog.PRESET_NORMAL)));
     }
 
+    /** A gesture slot counts as armed when its behavior pref differs from the
+     *  shared "no action" sentinel (VOLUME_DEFAULT), used for all key types. */
     private static boolean isConfigured(SharedPreferences prefs, String key) {
         return !SettingsDialog.VOLUME_DEFAULT.equals(
                 prefs.getString(key, SettingsDialog.VOLUME_DEFAULT));
@@ -1267,6 +1269,10 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         if (voiceInputManager != null) {
             voiceInputManager.destroy();
             voiceInputManager = null;
+        }
+        if (gestureDetector != null) {
+            gestureDetector.reset();
+            gestureDetector = null;
         }
         // Detach from service — sessions survive in TerminalService with HeadlessSessionClient
         if (terminalService != null) {
