@@ -133,4 +133,31 @@ public class KeyGestureDetectorTest {
         assertEquals(1, events.size());
         assertEquals("VOL_UP:SINGLE", events.get(0));
     }
+
+    @Test
+    public void longPress_firesAtThreshold() {
+        armVolUp(Gesture.LONG);
+        detector.onKeyDown(KeyEvent.KEYCODE_VOLUME_UP, ev(0));
+        scheduler.advance(GestureTiming.NORMAL.longPressMs);
+        assertEquals(1, events.size());
+        assertEquals("VOL_UP:LONG", events.get(0));
+    }
+
+    @Test
+    public void longPress_releaseAfterFire_emitsNoTap() {
+        armVolUp(Gesture.LONG);
+        detector.onKeyDown(KeyEvent.KEYCODE_VOLUME_UP, ev(0));
+        scheduler.advance(GestureTiming.NORMAL.longPressMs);
+        detector.onKeyUp(KeyEvent.KEYCODE_VOLUME_UP, ev(0));
+        scheduler.advance(1000);
+        assertEquals(1, events.size()); // only the LONG, no SINGLE
+    }
+
+    @Test
+    public void quickRelease_beforeThreshold_isATap() {
+        armVolUp(Gesture.LONG); // long armed, no multi-tap -> max taps = 1
+        tap(KeyEvent.KEYCODE_VOLUME_UP);
+        assertEquals(1, events.size());
+        assertEquals("VOL_UP:SINGLE", events.get(0)); // emitted immediately (max=1)
+    }
 }

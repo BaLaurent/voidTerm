@@ -144,7 +144,17 @@ public final class KeyGestureDetector {
         s.longFired = false;
         scheduler.cancel(s.multiTapToken); // continuing a tap sequence
         s.multiTapToken = null;
-        // long-press timer added in Task 5
+        if (armedHas(k, Gesture.LONG)) {
+            s.longToken = scheduler.postDelayed(() -> fireLong(k), timing.longPressMs);
+        }
+    }
+
+    private void fireLong(KeyId k) {
+        KeyState s = keyStates.get(k);
+        s.longFired = true;
+        s.longToken = null;
+        s.tapCount = 0;
+        listener.onGesture(k, Gesture.LONG);
     }
 
     private void endKeyPress(KeyId k) {
