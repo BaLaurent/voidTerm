@@ -31,7 +31,14 @@ public final class SettingsDialog {
     public static final String KEY_WHISPER_THREAD_OVERRIDE = "whisper_thread_override";
     public static final String KEY_WHISPER_SUPPRESS_NON_SPEECH = "whisper_suppress_non_speech";
     public static final String KEY_WHISPER_PROPORTIONAL_CONTEXT = "whisper_proportional_context";
-    public static final String KEY_WHISPER_STREAMING = "whisper_streaming";
+    public static final String KEY_WHISPER_STREAMING = "whisper_streaming"; // legacy, migrated to KEY_VOICE_DIRECT_SEND
+    // Engine-agnostic delivery: send transcription straight to the terminal,
+    // bypassing the review/validation overlay. Replaces the old whisper-only
+    // "streaming" toggle (which conflated direct delivery with progressive display).
+    public static final String KEY_VOICE_DIRECT_SEND = "voice_direct_send";
+    // When direct-send is on, also press Enter (\r) after the final text so the
+    // command executes itself (hands-free in VR). Default off.
+    public static final String KEY_VOICE_AUTO_SUBMIT = "voice_auto_submit";
     public static final String KEY_AUDIO_PREPROCESSING = "audio_preprocessing";
     public static final String KEY_AUDIO_GAIN = "audio_gain";
     public static final String KEY_AUDIO_PRE_EMPHASIS = "audio_pre_emphasis";
@@ -121,5 +128,25 @@ public final class SettingsDialog {
             return mode;
         }
         return PANEL_GAMEBOY;
+    }
+
+    /**
+     * Read the direct-send preference, migrating from the legacy whisper-only
+     * "whisper_streaming" key on first access. Migration is idempotent: once the
+     * new key exists, the old one is gone and never consulted again.
+     */
+    public static boolean isDirectSendEnabled(SharedPreferences prefs) {
+        if (prefs.contains(KEY_VOICE_DIRECT_SEND)) {
+            return prefs.getBoolean(KEY_VOICE_DIRECT_SEND, false);
+        }
+        if (prefs.contains(KEY_WHISPER_STREAMING)) {
+            boolean legacy = prefs.getBoolean(KEY_WHISPER_STREAMING, false);
+            prefs.edit()
+                    .putBoolean(KEY_VOICE_DIRECT_SEND, legacy)
+                    .remove(KEY_WHISPER_STREAMING)
+                    .apply();
+            return legacy;
+        }
+        return false;
     }
 }

@@ -188,8 +188,14 @@ public class VoiceInputManager implements TranscriptionListener {
         }
         dispatchStateChange(newState);
 
-        // Snapshot streaming flag before spawning thread
-        boolean streaming = (engine instanceof WhisperEngine) && ((WhisperEngine) engine).isStreaming();
+        // Snapshot delivery flags before spawning thread. Direct-send (bypass the
+        // review overlay) is an engine capability — whisper additionally streams
+        // text progressively, parakeet delivers the final text. Auto-submit only
+        // applies when direct-send is on.
+        boolean directSend = engine.isDirectToTerminal();
+        boolean autoSubmit = directSend && appContext
+                .getSharedPreferences(SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(SettingsDialog.KEY_VOICE_AUTO_SUBMIT, false);
 
         // Move stopRecording + transcribe off main thread — the main thread returns
         // immediately so the UI can show "Transcribing..." without waiting for the
@@ -237,14 +243,23 @@ public class VoiceInputManager implements TranscriptionListener {
                         long processingTimeMs = System.currentTimeMillis() - transcribeStart;
                         VoiceState newState = null;
 
-                        if (streaming) {
+                        if (directSend) {
                             // Send any remaining delta directly to terminal
                             if (text.length() > streamingSentLength[0]) {
                                 callback.onVoiceTextReady(text.substring(streamingSentLength[0]));
                             }
+                            // Auto-submit: press Enter once, after the final text.
+                            // Deferred so the "\r" arrives as a SEPARATE terminal read
+                            // rather than coalesced with the text into one chunk — a
+                            // coalesced trailing "\r" is treated by TUIs as a paste
+                            // newline (Shift+Enter), not a submit. Mirrors the 50ms
+                            // delay MacroExecutor uses before its "\r".
+                            if (autoSubmit) {
+                                mainHandler.postDelayed(() -> callback.onVoiceTextReady("\r"), 50);
+                            }
                             synchronized (stateLock) {
                                 if (currentState != VoiceState.TRANSCRIBING) {
-                                    Log.w(TAG, "Streaming success in " + currentState + ", discarding");
+                                    Log.w(TAG, "Direct-send success in " + currentState + ", discarding");
                                     return;
                                 }
                                 currentState = VoiceState.IDLE;

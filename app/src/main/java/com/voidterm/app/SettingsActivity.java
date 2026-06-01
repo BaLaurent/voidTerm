@@ -1,7 +1,11 @@
 package com.voidterm.app;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.graphics.Color;
@@ -25,7 +29,10 @@ import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
 
+import androidx.core.content.ContextCompat;
+
 import com.voidterm.voice.DeviceProfiler;
+import com.voidterm.voice.ParakeetModelManager;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -72,6 +79,14 @@ public class SettingsActivity extends Activity {
 
     // Whisper-only transcription controls (hidden when Parakeet selected)
     private LinearLayout whisperTranscriptionControls;
+
+    // Parakeet download UI (model section) — updated by the download broadcast receiver
+    private Button parakeetDownloadBtn;
+    private Button parakeetCancelBtn;
+    private Button parakeetDeleteBtn;
+    private TextView parakeetProgressText;
+    private TextView parakeetStatusView;
+    private BroadcastReceiver downloadReceiver;
 
     // Guard against spinner listeners firing during programmatic setSelection()
     private boolean initializing = true;
@@ -138,8 +153,36 @@ public class SettingsActivity extends Activity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        // Observe the background download while this screen is visible.
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(ParakeetDownloadService.BROADCAST_PROGRESS);
+        filter.addAction(ParakeetDownloadService.BROADCAST_COMPLETE);
+        filter.addAction(ParakeetDownloadService.BROADCAST_ERROR);
+        downloadReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                onDownloadBroadcast(intent);
+            }
+        };
+        ContextCompat.registerReceiver(this, downloadReceiver, filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED);
+        // Re-sync in case the download state changed while paused.
+        if (ParakeetDownloadService.isRunning()) {
+            applyDownloadUiState(true);
+            String last = ParakeetDownloadService.lastProgressText();
+            if (last != null && parakeetProgressText != null) parakeetProgressText.setText(last);
+        }
+    }
+
+    @Override
     protected void onPause() {
         super.onPause();
+        if (downloadReceiver != null) {
+            unregisterReceiver(downloadReceiver);
+            downloadReceiver = null;
+        }
         // Save text fields in a single batch
         SharedPreferences.Editor editor = prefs.edit();
         if (promptField != null) {
@@ -288,61 +331,50 @@ public class SettingsActivity extends Activity {
 
         boolean modelsReady = com.voidterm.voice.ParakeetModelManager.isModelComplete(this);
 
-        TextView parakeetStatus = new TextView(this);
-        parakeetStatus.setTextColor(textColor);
-        parakeetStatus.setTextSize(14);
-        parakeetStatus.setPadding(0, 0, 0, dp(8));
-        updateParakeetStatus(parakeetStatus, modelsReady);
-        parakeetControls.addView(parakeetStatus);
+        parakeetStatusView = new TextView(this);
+        parakeetStatusView.setTextColor(textColor);
+        parakeetStatusView.setTextSize(14);
+        parakeetStatusView.setPadding(0, 0, 0, dp(8));
+        updateParakeetStatus(parakeetStatusView, modelsReady);
+        parakeetControls.addView(parakeetStatusView);
 
-        Button downloadBtn = makeActionButton(modelsReady ? "Re-download Models" : "Download Models (~534 MB)");
-        TextView progressText = new TextView(this);
-        progressText.setTextColor(mutedColor);
-        progressText.setTextSize(12);
-        progressText.setVisibility(View.GONE);
-        parakeetControls.addView(progressText);
+        parakeetDownloadBtn = makeActionButton(modelsReady ? "Re-download Models" : "Download Models (~534 MB)");
+        parakeetProgressText = new TextView(this);
+        parakeetProgressText.setTextColor(mutedColor);
+        parakeetProgressText.setTextSize(12);
+        parakeetProgressText.setVisibility(View.GONE);
+        parakeetControls.addView(parakeetProgressText);
 
-        downloadBtn.setOnClickListener(v -> {
-            downloadBtn.setEnabled(false);
-            downloadBtn.setText("Downloading...");
-            progressText.setVisibility(View.VISIBLE);
-
-            com.voidterm.voice.ParakeetModelManager.downloadModels(this,
-                    new com.voidterm.voice.ParakeetModelManager.ProgressCallback() {
-                        @Override
-                        public void onProgress(String fileName, int fileIndex, int totalFiles,
-                                               long bytesDownloaded, long totalBytes) {
-                            String sizeMB = String.format("%.1f", bytesDownloaded / 1048576f);
-                            String totalMB = totalBytes > 0
-                                    ? String.format("%.1f", totalBytes / 1048576f) : "?";
-                            progressText.setText("Downloading " + fileName
-                                    + " (" + (fileIndex + 1) + "/" + totalFiles + "): "
-                                    + sizeMB + " / " + totalMB + " MB");
-                        }
-
-                        @Override
-                        public void onFileComplete(String fileName, int fileIndex, int totalFiles) {
-                            progressText.setText(fileName + " complete (" + (fileIndex + 1) + "/" + totalFiles + ")");
-                        }
-
-                        @Override
-                        public void onComplete() {
-                            downloadBtn.setEnabled(true);
-                            downloadBtn.setText("Re-download Models");
-                            progressText.setText("All models downloaded");
-                            updateParakeetStatus(parakeetStatus, true);
-                            prefs.edit().putBoolean(SettingsDialog.KEY_MODEL_RELOAD_REQUESTED, true).apply();
-                        }
-
-                        @Override
-                        public void onError(String error) {
-                            downloadBtn.setEnabled(true);
-                            downloadBtn.setText("Retry Download");
-                            progressText.setText("Error: " + error);
-                        }
-                    });
+        // Download runs in ParakeetDownloadService (foreground) so it survives leaving
+        // this screen. We just start it and observe progress via broadcast.
+        parakeetDownloadBtn.setOnClickListener(v -> {
+            startForegroundService(new Intent(this, ParakeetDownloadService.class)
+                    .setAction(ParakeetDownloadService.ACTION_START_DOWNLOAD));
+            applyDownloadUiState(true);
         });
-        parakeetControls.addView(downloadBtn);
+        parakeetControls.addView(parakeetDownloadBtn);
+
+        parakeetCancelBtn = makeActionButton("Cancel Download");
+        parakeetCancelBtn.setVisibility(View.GONE);
+        parakeetCancelBtn.setOnClickListener(v -> {
+            startService(new Intent(this, ParakeetDownloadService.class)
+                    .setAction(ParakeetDownloadService.ACTION_CANCEL_DOWNLOAD));
+            parakeetCancelBtn.setEnabled(false);
+        });
+        parakeetControls.addView(parakeetCancelBtn);
+
+        // Delete button — only meaningful when models exist; hidden while downloading.
+        parakeetDeleteBtn = makeActionButton("🗑 Delete Models");
+        parakeetDeleteBtn.setVisibility(modelsReady ? View.VISIBLE : View.GONE);
+        parakeetDeleteBtn.setOnClickListener(v -> confirmDeleteModels());
+        parakeetControls.addView(parakeetDeleteBtn);
+
+        // Seed UI from a download already running in the background.
+        if (ParakeetDownloadService.isRunning()) {
+            applyDownloadUiState(true);
+            String last = ParakeetDownloadService.lastProgressText();
+            if (last != null) parakeetProgressText.setText(last);
+        }
 
         parakeetControls.setVisibility(isWhisper ? View.GONE : View.VISIBLE);
         body.addView(parakeetControls);
@@ -368,10 +400,72 @@ public class SettingsActivity extends Activity {
 
     private void updateParakeetStatus(TextView statusView, boolean modelsReady) {
         if (modelsReady) {
-            long sizeMB = com.voidterm.voice.ParakeetModelManager.getDownloadedSize(this) / 1048576;
+            long sizeMB = ParakeetModelManager.getDownloadedSize(this) / 1048576;
             statusView.setText("Parakeet TDT v3 — Models ready (" + sizeMB + " MB)");
         } else {
             statusView.setText("Parakeet TDT v3 — Models not downloaded");
+        }
+    }
+
+    /** Toggle the download/cancel buttons between idle and in-progress states. */
+    private void applyDownloadUiState(boolean downloading) {
+        if (parakeetDownloadBtn == null) return;
+        parakeetDownloadBtn.setEnabled(!downloading);
+        parakeetDownloadBtn.setText(downloading
+                ? "Downloading..."
+                : (ParakeetModelManager.isModelComplete(this)
+                        ? "Re-download Models" : "Download Models (~534 MB)"));
+        if (downloading && parakeetProgressText != null) {
+            parakeetProgressText.setVisibility(View.VISIBLE);
+        }
+        if (parakeetCancelBtn != null) {
+            parakeetCancelBtn.setVisibility(downloading ? View.VISIBLE : View.GONE);
+            parakeetCancelBtn.setEnabled(true);
+        }
+        if (parakeetDeleteBtn != null) {
+            // Hidden during a download (it would delete files being written), and
+            // only shown when there is something to delete.
+            parakeetDeleteBtn.setVisibility(
+                    !downloading && ParakeetModelManager.isModelComplete(this)
+                            ? View.VISIBLE : View.GONE);
+        }
+    }
+
+    /** Confirm, then delete all Parakeet model files and reset the UI to "not downloaded". */
+    private void confirmDeleteModels() {
+        new AlertDialog.Builder(this)
+                .setTitle("Delete Parakeet models?")
+                .setMessage("This removes the ~534 MB of model files. You will need to "
+                        + "download them again to use Parakeet.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Delete", (d, w) -> {
+                    ParakeetModelManager.deleteModels(this);
+                    if (parakeetStatusView != null) updateParakeetStatus(parakeetStatusView, false);
+                    if (parakeetProgressText != null) {
+                        parakeetProgressText.setText("Models deleted");
+                        parakeetProgressText.setVisibility(View.VISIBLE);
+                    }
+                    applyDownloadUiState(false); // refresh button labels + hide delete
+                })
+                .show();
+    }
+
+    /** Handle a progress/complete/error broadcast from {@link ParakeetDownloadService}. */
+    private void onDownloadBroadcast(Intent intent) {
+        String action = intent.getAction();
+        String text = intent.getStringExtra(ParakeetDownloadService.EXTRA_TEXT);
+        if (ParakeetDownloadService.BROADCAST_PROGRESS.equals(action)) {
+            applyDownloadUiState(true);
+            if (parakeetProgressText != null && text != null) parakeetProgressText.setText(text);
+        } else if (ParakeetDownloadService.BROADCAST_COMPLETE.equals(action)) {
+            applyDownloadUiState(false);
+            if (parakeetProgressText != null) parakeetProgressText.setText("All models downloaded");
+            if (parakeetStatusView != null) updateParakeetStatus(parakeetStatusView, true);
+        } else if (ParakeetDownloadService.BROADCAST_ERROR.equals(action)) {
+            applyDownloadUiState(false);
+            if (parakeetProgressText != null && text != null) {
+                parakeetProgressText.setText("Error: " + text);
+            }
         }
     }
 
@@ -518,25 +612,33 @@ public class SettingsActivity extends Activity {
         promptField.setVisibility(isWhisper ? View.VISIBLE : View.GONE);
         body.addView(promptField);
 
-        // Streaming transcription toggle (whisper-only)
-        CheckBox streamingToggle = makeCheckBox("Streaming transcription",
-                prefs.getBoolean(SettingsDialog.KEY_WHISPER_STREAMING, false));
-        streamingToggle.setVisibility(isWhisper ? View.VISIBLE : View.GONE);
-        body.addView(streamingToggle);
+        // Direct-send toggle (both engines): bypass the review/validation overlay.
+        // Whisper additionally displays text progressively; Parakeet delivers the
+        // final text. Auto-submit (below) presses Enter so the command runs itself.
+        boolean directSendOn = SettingsDialog.isDirectSendEnabled(prefs);
+        CheckBox directSendToggle = makeCheckBox("Send directly (skip review)", directSendOn);
+        body.addView(directSendToggle);
 
-        TextView streamingWarning = new TextView(this);
-        streamingWarning.setText("\u26A0 Streaming sends text directly to the terminal without review. You cannot edit or cancel before submission.");
-        streamingWarning.setTextSize(12);
-        streamingWarning.setTextColor(0xFFFF9800);
-        streamingWarning.setPadding(0, 0, 0, dp(8));
-        streamingWarning.setVisibility(
-                isWhisper && prefs.getBoolean(SettingsDialog.KEY_WHISPER_STREAMING, false)
-                        ? View.VISIBLE : View.GONE);
-        body.addView(streamingWarning);
+        TextView directSendWarning = new TextView(this);
+        directSendWarning.setText("\u26A0 Sends text straight to the terminal without review. You cannot edit or cancel before it is inserted.");
+        directSendWarning.setTextSize(12);
+        directSendWarning.setTextColor(0xFFFF9800);
+        directSendWarning.setPadding(0, 0, 0, dp(8));
+        directSendWarning.setVisibility(directSendOn ? View.VISIBLE : View.GONE);
+        body.addView(directSendWarning);
 
-        streamingToggle.setOnCheckedChangeListener((btn, checked) -> {
-            prefs.edit().putBoolean(SettingsDialog.KEY_WHISPER_STREAMING, checked).apply();
-            streamingWarning.setVisibility(checked ? View.VISIBLE : View.GONE);
+        // Auto-submit sub-toggle: only meaningful when direct-send is on.
+        CheckBox autoSubmitToggle = makeCheckBox("Auto-submit (press Enter)",
+                prefs.getBoolean(SettingsDialog.KEY_VOICE_AUTO_SUBMIT, false));
+        autoSubmitToggle.setEnabled(directSendOn);
+        autoSubmitToggle.setOnCheckedChangeListener((btn, checked) ->
+                prefs.edit().putBoolean(SettingsDialog.KEY_VOICE_AUTO_SUBMIT, checked).apply());
+        body.addView(autoSubmitToggle);
+
+        directSendToggle.setOnCheckedChangeListener((btn, checked) -> {
+            prefs.edit().putBoolean(SettingsDialog.KEY_VOICE_DIRECT_SEND, checked).apply();
+            directSendWarning.setVisibility(checked ? View.VISIBLE : View.GONE);
+            autoSubmitToggle.setEnabled(checked);
         });
 
         // Audio preprocessing toggle (shared)

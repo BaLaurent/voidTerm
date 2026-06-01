@@ -1,16 +1,16 @@
 package com.voidterm.voice;
 
 import android.content.Context;
-import android.os.Handler;
-import android.os.Looper;
 import android.util.Log;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Manages Parakeet TDT v3 ONNX model files.
@@ -83,79 +83,89 @@ public class ParakeetModelManager {
         return total;
     }
 
-    /**
-     * Download all missing model files from HuggingFace.
-     * Runs on a background thread. Callbacks fire on the main thread.
-     * Skips files that already exist with non-zero size.
-     */
-    public static void downloadModels(Context context, ProgressCallback callback) {
-        Handler mainHandler = new Handler(Looper.getMainLooper());
+    /** Sentinel error message used by {@link #download} when {@code cancelFlag} is tripped. */
+    public static final String CANCELLED = "Cancelled";
 
-        new Thread(() -> {
-            try {
-                File modelDir = getModelDir(context);
-                if (!modelDir.exists() && !modelDir.mkdirs()) {
-                    mainHandler.post(() -> callback.onError("Failed to create model directory"));
+    /**
+     * Download all missing model files from HuggingFace, BLOCKING on the caller's
+     * thread. Callbacks fire synchronously on that same thread — the caller owns
+     * threading and dispatch (e.g. a foreground service routing to a notification).
+     *
+     * Skips files that already exist with non-zero size (simple resume: completed
+     * files are kept, an interrupted file restarts from scratch). Checks
+     * {@code cancelFlag} between files and inside the read loop for prompt
+     * cancellation; on cancel it reports {@link #CANCELLED} via {@code onError}.
+     */
+    public static void download(Context context, ProgressCallback callback, AtomicBoolean cancelFlag) {
+        try {
+            File modelDir = getModelDir(context);
+            if (!modelDir.exists() && !modelDir.mkdirs()) {
+                callback.onError("Failed to create model directory");
+                return;
+            }
+
+            int totalFiles = REQUIRED_FILES.length;
+            for (int i = 0; i < totalFiles; i++) {
+                if (cancelFlag.get()) {
+                    callback.onError(CANCELLED);
                     return;
                 }
+                String fileName = REQUIRED_FILES[i];
+                File destFile = new File(modelDir, fileName);
 
-                int totalFiles = REQUIRED_FILES.length;
-                for (int i = 0; i < totalFiles; i++) {
-                    String fileName = REQUIRED_FILES[i];
-                    File destFile = new File(modelDir, fileName);
-
-                    // Skip already downloaded files
-                    if (destFile.exists() && destFile.length() > 0) {
-                        Log.i(TAG, "Skipping " + fileName + " (already exists, " + destFile.length() + " bytes)");
-                        final int idx = i;
-                        mainHandler.post(() -> callback.onFileComplete(fileName, idx, totalFiles));
-                        continue;
-                    }
-
-                    String urlStr = DOWNLOAD_URLS[i];
-                    Log.i(TAG, "Downloading " + fileName + " from " + urlStr);
-
-                    File tempFile = new File(modelDir, fileName + ".tmp");
-                    final int fileIdx = i;
-
-                    try {
-                        downloadFile(urlStr, tempFile, (bytesDownloaded, totalBytes) -> {
-                            mainHandler.post(() -> callback.onProgress(
-                                    fileName, fileIdx, totalFiles, bytesDownloaded, totalBytes));
-                        });
-
-                        // Atomic rename to prevent partial files
-                        if (!tempFile.renameTo(destFile)) {
-                            throw new IOException("Failed to rename temp file to " + destFile.getName());
-                        }
-
-                        Log.i(TAG, "Downloaded " + fileName + " (" + destFile.length() + " bytes)");
-                        mainHandler.post(() -> callback.onFileComplete(fileName, fileIdx, totalFiles));
-
-                    } catch (IOException e) {
-                        // Clean up partial download
-                        if (tempFile.exists()) tempFile.delete();
-                        String error = "Failed to download " + fileName + ": " + e.getMessage();
-                        Log.e(TAG, error, e);
-                        mainHandler.post(() -> callback.onError(error));
-                        return;
-                    }
+                // Skip already downloaded files
+                if (destFile.exists() && destFile.length() > 0) {
+                    Log.i(TAG, "Skipping " + fileName + " (already exists, " + destFile.length() + " bytes)");
+                    callback.onFileComplete(fileName, i, totalFiles);
+                    continue;
                 }
 
-                mainHandler.post(callback::onComplete);
+                String urlStr = DOWNLOAD_URLS[i];
+                Log.i(TAG, "Downloading " + fileName + " from " + urlStr);
 
-            } catch (Exception e) {
-                Log.e(TAG, "Download failed", e);
-                mainHandler.post(() -> callback.onError("Download failed: " + e.getMessage()));
+                File tempFile = new File(modelDir, fileName + ".tmp");
+                final int fileIdx = i;
+
+                try {
+                    downloadFile(urlStr, tempFile, cancelFlag, (bytesDownloaded, totalBytes) ->
+                            callback.onProgress(fileName, fileIdx, totalFiles, bytesDownloaded, totalBytes));
+
+                    // Atomic rename to prevent partial files
+                    if (!tempFile.renameTo(destFile)) {
+                        throw new IOException("Failed to rename temp file to " + destFile.getName());
+                    }
+
+                    Log.i(TAG, "Downloaded " + fileName + " (" + destFile.length() + " bytes)");
+                    callback.onFileComplete(fileName, fileIdx, totalFiles);
+
+                } catch (IOException e) {
+                    // Clean up partial download
+                    if (tempFile.exists()) tempFile.delete();
+                    if (cancelFlag.get()) {
+                        callback.onError(CANCELLED);
+                        return;
+                    }
+                    String error = "Failed to download " + fileName + ": " + e.getMessage();
+                    Log.e(TAG, error, e);
+                    callback.onError(error);
+                    return;
+                }
             }
-        }, "ParakeetModelDownload").start();
+
+            callback.onComplete();
+
+        } catch (Exception e) {
+            Log.e(TAG, "Download failed", e);
+            callback.onError("Download failed: " + e.getMessage());
+        }
     }
 
     private interface DownloadProgressListener {
         void onProgress(long bytesDownloaded, long totalBytes);
     }
 
-    private static void downloadFile(String urlStr, File destFile, DownloadProgressListener listener) throws IOException {
+    private static void downloadFile(String urlStr, File destFile, AtomicBoolean cancelFlag,
+                                     DownloadProgressListener listener) throws IOException {
         HttpURLConnection connection = null;
         try {
             URL url = new URL(urlStr);
@@ -191,6 +201,9 @@ public class ParakeetModelManager {
                 int len;
                 long lastProgressTime = 0;
                 while ((len = in.read(buf)) > 0) {
+                    if (cancelFlag.get()) {
+                        throw new InterruptedIOException("Download cancelled");
+                    }
                     out.write(buf, 0, len);
                     downloaded += len;
                     // Throttle progress callbacks to avoid flooding the main thread

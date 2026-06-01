@@ -30,6 +30,14 @@ public interface TranscriptionEngine {
     /** Check if the model is loaded and ready for transcription. */
     boolean isModelLoaded();
 
+    /**
+     * True if transcribed text should be injected straight into the terminal,
+     * bypassing the review/validation overlay. Each engine reads the shared
+     * direct-send preference; engines that can also display text progressively
+     * (whisper.cpp) do so as a side effect, others just deliver the final text.
+     */
+    boolean isDirectToTerminal();
+
     /** Release all resources. Must be called when engine is no longer needed. */
     void release();
 

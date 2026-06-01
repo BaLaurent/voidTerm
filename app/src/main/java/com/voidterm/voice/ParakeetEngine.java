@@ -492,6 +492,16 @@ public class ParakeetEngine implements TranscriptionEngine {
                 && decoderSession != null && tokenizer.isLoaded();
     }
 
+    /**
+     * Parakeet's pipeline is monolithic (no intermediate callbacks), so direct-send
+     * means the final text is injected straight into the terminal without the
+     * review overlay — there is no progressive display.
+     */
+    @Override
+    public boolean isDirectToTerminal() {
+        return SettingsDialog.isDirectSendEnabled(prefs);
+    }
+
     @Override
     public void release() {
         isDestroyed = true;

@@ -31,7 +31,7 @@ public class WhisperEngine implements TranscriptionEngine {
             SettingsDialog.KEY_WHISPER_INITIAL_PROMPT, SettingsDialog.KEY_WHISPER_TEMPERATURE,
             SettingsDialog.KEY_WHISPER_BEAM_SEARCH, SettingsDialog.KEY_WHISPER_BEAM_SIZE,
             SettingsDialog.KEY_WHISPER_THREAD_OVERRIDE, SettingsDialog.KEY_WHISPER_SUPPRESS_NON_SPEECH,
-            SettingsDialog.KEY_WHISPER_PROPORTIONAL_CONTEXT, SettingsDialog.KEY_WHISPER_STREAMING
+            SettingsDialog.KEY_WHISPER_PROPORTIONAL_CONTEXT, SettingsDialog.KEY_VOICE_DIRECT_SEND
     ));
 
     private final SharedPreferences.OnSharedPreferenceChangeListener configInvalidator =
@@ -97,8 +97,13 @@ public class WhisperEngine implements TranscriptionEngine {
         return bridge;
     }
 
-    /** Returns true if streaming mode is enabled in whisper config. */
-    public boolean isStreaming() {
+    /**
+     * Direct-send maps to whisper's streaming flag: when enabled, text bypasses
+     * the review overlay AND is displayed progressively (token-by-token) as a
+     * side effect of the native segment callback.
+     */
+    @Override
+    public boolean isDirectToTerminal() {
         return buildConfig().streaming;
     }
 
@@ -131,7 +136,7 @@ public class WhisperEngine implements TranscriptionEngine {
                 prefs.getInt(SettingsDialog.KEY_WHISPER_THREAD_OVERRIDE, 0),
                 prefs.getBoolean(SettingsDialog.KEY_WHISPER_SUPPRESS_NON_SPEECH, false),
                 prefs.getBoolean(SettingsDialog.KEY_WHISPER_PROPORTIONAL_CONTEXT, false),
-                prefs.getBoolean(SettingsDialog.KEY_WHISPER_STREAMING, false)
+                SettingsDialog.isDirectSendEnabled(prefs)
         );
     }
 }

@@ -131,6 +131,15 @@ The session drawer (`TermuxActivity.buildDrawerPanel()`) and `SessionListAdapter
 
 `SettingsActivity` (full-screen Activity, programmatic layout) lets users select a custom whisper.cpp model file via Android's `ACTION_OPEN_DOCUMENT` file picker. `SettingsDialog` holds all preference key constants and label/value arrays. The selected file is copied to `{filesDir}/models/`, its name persisted in `SharedPreferences` ("voidterm_settings" / "whisper_model_name"), and hot-reloaded via `VoiceInputManager.reloadModel()`. Default model: `ggml-base.bin` (bundled in assets). `WhisperBridge.loadModel()` checks `{filesDir}/models/` first, falls back to assets, and returns a clear error if neither exists. GPU toggle (default off) controls `whisper_context_params.use_gpu`. `WhisperBridge` selects the FP16 library variant at runtime if `Build.VERSION.SDK_INT >= 27` (ARMv8.2-A support). `TermuxActivity.onResume()` calls `applyTheme()` to sync theme after returning from SettingsActivity.
 
+### Parakeet Model Download (background)
+
+The Parakeet TDT v3 model (~534 MB, 4 ONNX files from HuggingFace) downloads via a **dedicated foreground service**, `ParakeetDownloadService` (`com.voidterm.app`), so it survives leaving the Settings screen and app backgrounding. Responsibility split (SRP): the service is the **mechanism** (foreground lifecycle, progress notification, `PARTIAL_WAKE_LOCK` against device sleep, cancellation); `ParakeetModelManager.download(ctx, callback, AtomicBoolean cancelFlag)` is the **logic** (blocking HTTP transfer on the caller's thread, no `Handler`/`Looper` — the service owns dispatch). It is separate from `TerminalService` on purpose: `TerminalService.stopIfNoSessions()` would otherwise kill the download.
+
+- `SettingsActivity` starts it via `startForegroundService(ACTION_START_DOWNLOAD)` and observes progress through a private broadcast (`BROADCAST_PROGRESS/COMPLETE/ERROR`, registered `RECEIVER_NOT_EXPORTED` in `onResume`/`onPause`). On reopen mid-download it seeds its UI from `ParakeetDownloadService.isRunning()` + `lastProgressText()`.
+- Notification (channel `voidterm_download`, ID **2** ≠ TerminalService's ID 1) shows per-file progress + a **Cancel** action; tapping opens Settings. On complete it sets `KEY_MODEL_RELOAD_REQUESTED`, posts a dismissable "ready" notification, and `stopSelf()`.
+- **Cancellation**: `ACTION_CANCEL_DOWNLOAD` trips `cancelFlag`; the download loop checks it between files and inside the byte loop (`InterruptedIOException`), deletes the partial `.tmp`, and reports the `ParakeetModelManager.CANCELLED` sentinel (silent teardown, no error notification).
+- **Resume**: completed files are skipped; an interrupted file restarts from scratch (no HTTP Range). Because completed files are skipped, "Re-download Models" is a no-op when all files are present — a "🗑 Delete Models" button (`confirmDeleteModels()` → `ParakeetModelManager.deleteModels()`, behind an `AlertDialog`) clears them first. The delete button is hidden while a download is running and when no models exist. Manifest: `WAKE_LOCK` permission + a plain `<service>` declaration (no `foregroundServiceType` — `targetSdk 28` doesn't require it).
+
 ### Transcription Settings
 
 Configurable whisper.cpp transcription parameters in `SettingsDialog` "Transcription" section. All settings persisted in `SharedPreferences` ("voidterm_settings") and read fresh at each transcription via `VoiceInputManager.buildWhisperConfig()` → `WhisperConfig` (immutable data class in `com.voidterm.voice`).
@@ -145,9 +154,10 @@ Configurable whisper.cpp transcription parameters in `SettingsDialog` "Transcrip
 | `whisper_beam_size` | int | `5` | Beam width (2-8, only when beam search enabled) |
 | `whisper_thread_override` | int | `0` | Thread count (0=auto via CpuInfo) |
 | `whisper_suppress_non_speech` | boolean | `false` | Filter non-speech tokens |
-| `whisper_streaming` | boolean | `false` | Show text progressively during transcription |
+| `voice_direct_send` | boolean | `false` | Bypass the review overlay — see "Direct Send & Auto-Submit" below (engine-agnostic) |
+| `voice_auto_submit` | boolean | `false` | Press Enter (`\r`) after the final text (only with direct-send) |
 
-Data flow: `SharedPreferences → WhisperConfig → WhisperBridge.transcribe() → nativeTranscribe() JNI → whisper_full_params`. The JNI layer receives flattened primitives (not the config object) to avoid `GetFieldID` boilerplate. Advanced settings (temperature, beam search, threads, suppress) are hidden behind a collapsible "Advanced..." button in the UI. Streaming toggle is visible in the main Transcription section (not behind Advanced).
+Data flow: `SharedPreferences → WhisperConfig → WhisperBridge.transcribe() → nativeTranscribe() JNI → whisper_full_params`. The JNI layer receives flattened primitives (not the config object) to avoid `GetFieldID` boilerplate. Advanced settings (temperature, beam search, threads, suppress) are hidden behind a collapsible "Advanced..." button in the UI. The direct-send and auto-submit toggles are visible in the main Transcription section for both engines (not behind Advanced) — see "Direct Send & Auto-Submit" below.
 
 ### Audio Preprocessing (AudioConfig)
 
@@ -166,19 +176,24 @@ Pipeline order: DC removal → HP filter → pre-emphasis → peak normalization
 
 Data flow: `SharedPreferences → AudioConfig → AudioPreprocessor.process() → whisper.cpp input`. Cached in `VoiceInputManager.cachedAudioConfig` (volatile, invalidated by `OnSharedPreferenceChangeListener`).
 
-### Streaming Transcription
+### Direct Send & Auto-Submit
 
-When `whisper_streaming` is enabled, decoded text appears progressively in the overlay during the `TRANSCRIBING` state instead of showing a spinner. Uses whisper.cpp's `new_segment_callback` mechanism.
+Direct-send is an **engine capability** (`TranscriptionEngine.isDirectToTerminal()`), not a whisper-only flag. When enabled (`voice_direct_send`), the transcribed text is injected straight into the terminal PTY, bypassing the `SHOWING_RESULT` review/cancel overlay. The gate in `VoiceInputManager` is engine-agnostic: `boolean directSend = engine.isDirectToTerminal();` (no more `instanceof WhisperEngine`).
 
-Data flow: `whisper_full() → new_segment_callback → StreamCallbackData (C++) → JNI CallVoidMethod → WhisperBridge.onNativeSegment() → mainHandler.post → Callback.onPartialResult() → VoiceInputManager → TranscriptionOverlay.updateStreamingText()`.
+- **WhisperEngine**: direct-send maps to `WhisperConfig.streaming`, so text *also* appears progressively (token-by-token) during `TRANSCRIBING` — see streaming pipeline below.
+- **ParakeetEngine**: the pipeline is monolithic (no intermediate callbacks), so direct-send injects only the *final* text. A brief "Transcribing…" spinner shows during inference, then `setState(IDLE)` hides the overlay (`overlayRoot` → `GONE`) — no progressive display, no phantom overlay.
 
-Key implementation details:
-- When streaming, `GetFloatArrayRegion` (copy) replaces `GetPrimitiveArrayCritical` (zero-copy) because the latter blocks the GC and forbids JNI callbacks
+`voice_auto_submit` (sub-toggle of direct-send) appends a single `\r` after the final text so the command executes itself — ideal hands-free in VR. It fires once in `onSuccess`, never on progressive deltas. The `\r` is posted with a **50ms delay** (`mainHandler.postDelayed`) so it arrives as a separate terminal read instead of being coalesced with the text into one chunk — a coalesced trailing `\r` is treated by TUIs (e.g. Claude Code) as a paste newline (Shift+Enter), not a submit. This mirrors `MacroExecutor`, which uses the same 50ms delay before its `\r`. Without auto-submit, the text lands at the prompt and the user presses Enter manually.
+
+**Migration**: `whisper_streaming` was renamed to `voice_direct_send`. `SettingsDialog.isDirectSendEnabled()` migrates the old key on first read (idempotent). The native/JNI layer keeps the technical name `streaming` (`WhisperConfig.streaming`) — it genuinely controls progressive segment callbacks there. The Settings UI shows both toggles for **both** engines, with an orange warning when direct-send is on.
+
+**Whisper progressive streaming pipeline** (active when direct-send is on for Whisper):
+`whisper_full() → new_segment_callback → StreamCallbackData (C++) → JNI CallVoidMethod → WhisperBridge.onNativeSegment() → mainHandler.post → Callback.onPartialResult() → VoiceInputManager → terminal PTY (delta)`.
+
+- `GetFloatArrayRegion` (copy) replaces `GetPrimitiveArrayCritical` (zero-copy) because the latter blocks the GC and forbids JNI callbacks
 - `params.single_segment = false` enables multiple segments, triggering the callback progressively
-- The overlay reuses `resultContainer` with hidden Send/Cancel buttons during streaming; buttons reappear when `showTranscription()` is called with the final text
 - Benchmark (`DeviceProfiler`) always passes `streaming=false` to avoid callback overhead during profiling
-- Default is OFF — behavior is 100% identical to pre-streaming when disabled
-- Streaming sends text directly to terminal PTY without review/cancel overlay — SettingsDialog shows an orange warning when enabled
+- Default is OFF — behavior is 100% identical to pre-direct-send when disabled
 
 ### Auto-Tuning (DeviceProfiler)
 
