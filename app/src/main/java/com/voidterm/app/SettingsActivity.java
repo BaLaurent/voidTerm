@@ -71,11 +71,23 @@ public class SettingsActivity extends Activity {
     private static final String KEY_EXPANDED_SECTION = "expanded_section";
     private int expandedSection = SECTION_MODEL;
 
+    // Shared option sets for key-gesture rows.
+    private static final String[] GESTURE_VALUES_WITH_DEFAULT = {
+            SettingsDialog.VOLUME_DEFAULT, SettingsDialog.BACK_ESCAPE,
+            SettingsDialog.BACK_TOGGLE_KEYBOARD, SettingsDialog.BACK_MACRO,
+            SettingsDialog.BACK_VOICE};
+    private static final String[] VOLUME_SINGLE_LABELS = {
+            "Default (system volume)", "Escape", "Toggle Keyboard", "Macro", "Voice Input"};
+    private static final String[] NONEABLE_LABELS = {
+            "None", "Escape", "Toggle Keyboard", "Macro", "Voice Input"};
+    private static final String[] BACK_SINGLE_LABELS = {
+            "Escape", "Toggle Keyboard", "Macro", "Voice Input"};
+    private static final String[] BACK_SINGLE_VALUES = {
+            SettingsDialog.BACK_ESCAPE, SettingsDialog.BACK_TOGGLE_KEYBOARD,
+            SettingsDialog.BACK_MACRO, SettingsDialog.BACK_VOICE};
+
     // Text fields that need saving onPause
     private EditText promptField;
-    private EditText macroField;
-    private EditText volumeUpMacroField;
-    private EditText volumeDownMacroField;
 
     // Whisper-only transcription controls (hidden when Parakeet selected)
     private LinearLayout whisperTranscriptionControls;
@@ -188,18 +200,6 @@ public class SettingsActivity extends Activity {
         if (promptField != null) {
             editor.putString(SettingsDialog.KEY_WHISPER_INITIAL_PROMPT,
                     promptField.getText().toString());
-        }
-        if (macroField != null) {
-            editor.putString(SettingsDialog.KEY_BACK_MACRO,
-                    macroField.getText().toString());
-        }
-        if (volumeUpMacroField != null) {
-            editor.putString(SettingsDialog.KEY_VOLUME_UP_MACRO,
-                    volumeUpMacroField.getText().toString());
-        }
-        if (volumeDownMacroField != null) {
-            editor.putString(SettingsDialog.KEY_VOLUME_DOWN_MACRO,
-                    volumeDownMacroField.getText().toString());
         }
         editor.apply();
     }
@@ -892,38 +892,21 @@ public class SettingsActivity extends Activity {
     private LinearLayout buildBackKeySection() {
         LinearLayout body = makeSectionBody();
 
-        String[] backOptions = {"Escape", "Toggle Keyboard", "Macro", "Voice Input"};
-        String[] backValues = {SettingsDialog.BACK_ESCAPE,
-                SettingsDialog.BACK_TOGGLE_KEYBOARD, SettingsDialog.BACK_MACRO,
-                SettingsDialog.BACK_VOICE};
-        String currentBack = prefs.getString(SettingsDialog.KEY_BACK_BEHAVIOR,
-                SettingsDialog.BACK_ESCAPE);
+        body.addView(makeSubheading("Back Key"));
+        addGestureRow(body, "Single tap",
+                SettingsDialog.KEY_BACK_BEHAVIOR, SettingsDialog.KEY_BACK_MACRO,
+                BACK_SINGLE_LABELS, BACK_SINGLE_VALUES, SettingsDialog.BACK_ESCAPE);
 
-        body.addView(makeLabel("Behavior"));
-        Spinner backSpinner = makeSpinner(backOptions);
-        int selectedIndex = findIndex(backValues, currentBack);
-        backSpinner.setSelection(selectedIndex);
-        body.addView(backSpinner);
-
-        macroField = new EditText(this);
-        macroField.setHint("Macro command (e.g. {ctrl+c})");
-        macroField.setTextColor(textColor);
-        macroField.setHintTextColor(hintColor);
-        macroField.setTextSize(14);
-        macroField.setSingleLine(true);
-        macroField.setText(prefs.getString(SettingsDialog.KEY_BACK_MACRO, ""));
-        macroField.setVisibility(
-                SettingsDialog.BACK_MACRO.equals(currentBack) ? View.VISIBLE : View.GONE);
-        body.addView(macroField);
-
-        backSpinner.setOnItemSelectedListener(new SimpleItemSelectedListener() {
-            @Override
-            public void onItemSelected(AdapterView<?> p, View v, int pos, long id) {
-                prefs.edit().putString(SettingsDialog.KEY_BACK_BEHAVIOR,
-                        backValues[pos]).apply();
-                macroField.setVisibility(pos == 2 ? View.VISIBLE : View.GONE);
-            }
-        });
+        LinearLayout adv = addAdvancedGroup(body);
+        addGestureRow(adv, "Double tap",
+                SettingsDialog.KEY_BACK_DOUBLE, SettingsDialog.KEY_BACK_DOUBLE_MACRO,
+                NONEABLE_LABELS, GESTURE_VALUES_WITH_DEFAULT, SettingsDialog.VOLUME_DEFAULT);
+        addGestureRow(adv, "Triple tap",
+                SettingsDialog.KEY_BACK_TRIPLE, SettingsDialog.KEY_BACK_TRIPLE_MACRO,
+                NONEABLE_LABELS, GESTURE_VALUES_WITH_DEFAULT, SettingsDialog.VOLUME_DEFAULT);
+        addGestureRow(adv, "Long press",
+                SettingsDialog.KEY_BACK_LONG, SettingsDialog.KEY_BACK_LONG_MACRO,
+                NONEABLE_LABELS, GESTURE_VALUES_WITH_DEFAULT, SettingsDialog.VOLUME_DEFAULT);
 
         return body;
     }
@@ -933,72 +916,133 @@ public class SettingsActivity extends Activity {
     private LinearLayout buildVolumeKeysSection() {
         LinearLayout body = makeSectionBody();
 
-        String[] volOptions = {"Default (system volume)", "Escape", "Toggle Keyboard", "Macro", "Voice Input"};
-        String[] volValues = {SettingsDialog.VOLUME_DEFAULT, SettingsDialog.BACK_ESCAPE,
-                SettingsDialog.BACK_TOGGLE_KEYBOARD, SettingsDialog.BACK_MACRO,
-                SettingsDialog.BACK_VOICE};
-
-        // --- Volume Up ---
-        body.addView(makeSubheading("Volume Up"));
-
-        String currentUp = prefs.getString(SettingsDialog.KEY_VOLUME_UP_BEHAVIOR,
-                SettingsDialog.VOLUME_DEFAULT);
-        Spinner upSpinner = makeSpinner(volOptions);
-        upSpinner.setSelection(findIndex(volValues, currentUp));
-        body.addView(upSpinner);
-
-        volumeUpMacroField = new EditText(this);
-        volumeUpMacroField.setHint("Macro command (e.g. {ctrl+c})");
-        volumeUpMacroField.setTextColor(textColor);
-        volumeUpMacroField.setHintTextColor(hintColor);
-        volumeUpMacroField.setTextSize(14);
-        volumeUpMacroField.setSingleLine(true);
-        volumeUpMacroField.setText(prefs.getString(SettingsDialog.KEY_VOLUME_UP_MACRO, ""));
-        volumeUpMacroField.setVisibility(
-                SettingsDialog.BACK_MACRO.equals(currentUp) ? View.VISIBLE : View.GONE);
-        body.addView(volumeUpMacroField);
-
-        upSpinner.setOnItemSelectedListener(new SimpleItemSelectedListener() {
+        // Gesture sensitivity preset (applies to all keys)
+        body.addView(makeLabel("Gesture sensitivity"));
+        Spinner presetSpinner = makeSpinner(SettingsDialog.GESTURE_PRESET_LABELS);
+        String currentPreset = prefs.getString(
+                SettingsDialog.KEY_GESTURE_TIMING_PRESET, SettingsDialog.PRESET_NORMAL);
+        presetSpinner.setSelection(findIndex(SettingsDialog.GESTURE_PRESET_VALUES, currentPreset));
+        presetSpinner.setOnItemSelectedListener(new SimpleItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> p, View v, int pos, long id) {
-                prefs.edit().putString(SettingsDialog.KEY_VOLUME_UP_BEHAVIOR,
-                        volValues[pos]).apply();
-                volumeUpMacroField.setVisibility(pos == 3 ? View.VISIBLE : View.GONE);
+                prefs.edit().putString(SettingsDialog.KEY_GESTURE_TIMING_PRESET,
+                        SettingsDialog.GESTURE_PRESET_VALUES[pos]).apply();
             }
         });
+        body.addView(presetSpinner);
+        body.addView(makeDivider());
+
+        // Volume Up
+        body.addView(makeSubheading("Volume Up"));
+        addGestureRow(body, "Single tap",
+                SettingsDialog.KEY_VOLUME_UP_BEHAVIOR, SettingsDialog.KEY_VOLUME_UP_MACRO,
+                VOLUME_SINGLE_LABELS, GESTURE_VALUES_WITH_DEFAULT, SettingsDialog.VOLUME_DEFAULT);
+        LinearLayout upAdv = addAdvancedGroup(body);
+        addGestureRow(upAdv, "Double tap",
+                SettingsDialog.KEY_VOLUP_DOUBLE, SettingsDialog.KEY_VOLUP_DOUBLE_MACRO,
+                NONEABLE_LABELS, GESTURE_VALUES_WITH_DEFAULT, SettingsDialog.VOLUME_DEFAULT);
+        addGestureRow(upAdv, "Triple tap",
+                SettingsDialog.KEY_VOLUP_TRIPLE, SettingsDialog.KEY_VOLUP_TRIPLE_MACRO,
+                NONEABLE_LABELS, GESTURE_VALUES_WITH_DEFAULT, SettingsDialog.VOLUME_DEFAULT);
+        addGestureRow(upAdv, "Long press",
+                SettingsDialog.KEY_VOLUP_LONG, SettingsDialog.KEY_VOLUP_LONG_MACRO,
+                NONEABLE_LABELS, GESTURE_VALUES_WITH_DEFAULT, SettingsDialog.VOLUME_DEFAULT);
 
         body.addView(makeDivider());
 
-        // --- Volume Down ---
+        // Volume Down
         body.addView(makeSubheading("Volume Down"));
+        addGestureRow(body, "Single tap",
+                SettingsDialog.KEY_VOLUME_DOWN_BEHAVIOR, SettingsDialog.KEY_VOLUME_DOWN_MACRO,
+                VOLUME_SINGLE_LABELS, GESTURE_VALUES_WITH_DEFAULT, SettingsDialog.VOLUME_DEFAULT);
+        LinearLayout downAdv = addAdvancedGroup(body);
+        addGestureRow(downAdv, "Double tap",
+                SettingsDialog.KEY_VOLDOWN_DOUBLE, SettingsDialog.KEY_VOLDOWN_DOUBLE_MACRO,
+                NONEABLE_LABELS, GESTURE_VALUES_WITH_DEFAULT, SettingsDialog.VOLUME_DEFAULT);
+        addGestureRow(downAdv, "Triple tap",
+                SettingsDialog.KEY_VOLDOWN_TRIPLE, SettingsDialog.KEY_VOLDOWN_TRIPLE_MACRO,
+                NONEABLE_LABELS, GESTURE_VALUES_WITH_DEFAULT, SettingsDialog.VOLUME_DEFAULT);
+        addGestureRow(downAdv, "Long press",
+                SettingsDialog.KEY_VOLDOWN_LONG, SettingsDialog.KEY_VOLDOWN_LONG_MACRO,
+                NONEABLE_LABELS, GESTURE_VALUES_WITH_DEFAULT, SettingsDialog.VOLUME_DEFAULT);
 
-        String currentDown = prefs.getString(SettingsDialog.KEY_VOLUME_DOWN_BEHAVIOR,
-                SettingsDialog.VOLUME_DEFAULT);
-        Spinner downSpinner = makeSpinner(volOptions);
-        downSpinner.setSelection(findIndex(volValues, currentDown));
-        body.addView(downSpinner);
+        body.addView(makeDivider());
 
-        volumeDownMacroField = new EditText(this);
-        volumeDownMacroField.setHint("Macro command (e.g. {ctrl+c})");
-        volumeDownMacroField.setTextColor(textColor);
-        volumeDownMacroField.setHintTextColor(hintColor);
-        volumeDownMacroField.setTextSize(14);
-        volumeDownMacroField.setSingleLine(true);
-        volumeDownMacroField.setText(prefs.getString(SettingsDialog.KEY_VOLUME_DOWN_MACRO, ""));
-        volumeDownMacroField.setVisibility(
-                SettingsDialog.BACK_MACRO.equals(currentDown) ? View.VISIBLE : View.GONE);
-        body.addView(volumeDownMacroField);
+        // Combo (Vol+ & Vol-)
+        body.addView(makeSubheading("Combo (Vol+ & Vol-)"));
+        addGestureRow(body, "Single",
+                SettingsDialog.KEY_COMBO_SINGLE, SettingsDialog.KEY_COMBO_SINGLE_MACRO,
+                NONEABLE_LABELS, GESTURE_VALUES_WITH_DEFAULT, SettingsDialog.VOLUME_DEFAULT);
+        addGestureRow(body, "Double",
+                SettingsDialog.KEY_COMBO_DOUBLE, SettingsDialog.KEY_COMBO_DOUBLE_MACRO,
+                NONEABLE_LABELS, GESTURE_VALUES_WITH_DEFAULT, SettingsDialog.VOLUME_DEFAULT);
+        addGestureRow(body, "Triple",
+                SettingsDialog.KEY_COMBO_TRIPLE, SettingsDialog.KEY_COMBO_TRIPLE_MACRO,
+                NONEABLE_LABELS, GESTURE_VALUES_WITH_DEFAULT, SettingsDialog.VOLUME_DEFAULT);
 
-        downSpinner.setOnItemSelectedListener(new SimpleItemSelectedListener() {
+        return body;
+    }
+
+    /**
+     * Adds a labelled behavior spinner + conditional macro field bound to the
+     * given preference keys. Shared by every key-gesture slot. The macro field
+     * appears only when "Macro" is selected. {@code values}/{@code labels} pick
+     * the option set; {@code defaultBehavior} is the pref read fallback (and the
+     * preselected value for a fresh install).
+     */
+    private void addGestureRow(LinearLayout parent, String label,
+                               String behaviorKey, String macroKey,
+                               String[] labels, String[] values, String defaultBehavior) {
+        final int macroIndex = findIndex(values, SettingsDialog.BACK_MACRO);
+
+        parent.addView(makeLabel(label));
+        Spinner spinner = makeSpinner(labels);
+        String current = prefs.getString(behaviorKey, defaultBehavior);
+        spinner.setSelection(findIndex(values, current));
+        parent.addView(spinner);
+
+        final EditText macro = new EditText(this);
+        macro.setHint("Macro command (e.g. {ctrl+c})");
+        macro.setTextColor(textColor);
+        macro.setHintTextColor(hintColor);
+        macro.setTextSize(14);
+        macro.setSingleLine(true);
+        macro.setText(prefs.getString(macroKey, ""));
+        macro.setVisibility(
+                SettingsDialog.BACK_MACRO.equals(current) ? View.VISIBLE : View.GONE);
+        parent.addView(macro);
+
+        macro.addTextChangedListener(new SimpleTextWatcher() {
             @Override
-            public void onItemSelected(AdapterView<?> p, View v, int pos, long id) {
-                prefs.edit().putString(SettingsDialog.KEY_VOLUME_DOWN_BEHAVIOR,
-                        volValues[pos]).apply();
-                volumeDownMacroField.setVisibility(pos == 3 ? View.VISIBLE : View.GONE);
+            public void afterTextChanged(android.text.Editable e) {
+                prefs.edit().putString(macroKey, e.toString()).apply();
             }
         });
 
-        return body;
+        spinner.setOnItemSelectedListener(new SimpleItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> p, View v, int pos, long id) {
+                prefs.edit().putString(behaviorKey, values[pos]).apply();
+                macro.setVisibility(pos == macroIndex ? View.VISIBLE : View.GONE);
+            }
+        });
+    }
+
+    /** Adds a collapsible "Advanced" sub-group; rows added to the returned container. */
+    private LinearLayout addAdvancedGroup(LinearLayout parent) {
+        final LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setVisibility(View.GONE);
+
+        final Button toggle = makeActionButton("Advanced...");
+        toggle.setOnClickListener(v -> {
+            boolean show = container.getVisibility() != View.VISIBLE;
+            container.setVisibility(show ? View.VISIBLE : View.GONE);
+            toggle.setText(show ? "Advanced ▲" : "Advanced...");
+        });
+        parent.addView(toggle);
+        parent.addView(container);
+        return container;
     }
 
     private void computeDerivedColors() {
@@ -1126,5 +1170,11 @@ public class SettingsActivity extends Activity {
             implements AdapterView.OnItemSelectedListener {
         @Override
         public void onNothingSelected(AdapterView<?> parent) {}
+    }
+
+    /** TextWatcher stub that only needs afterTextChanged. */
+    private static abstract class SimpleTextWatcher implements android.text.TextWatcher {
+        @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
+        @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
     }
 }
