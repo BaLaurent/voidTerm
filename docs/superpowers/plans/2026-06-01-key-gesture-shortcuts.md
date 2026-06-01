@@ -286,8 +286,9 @@ public final class FakeScheduler implements Scheduler {
                 decrementActive(left);
                 break;
             }
-            decrementActive(next.remaining);
-            left -= next.remaining;
+            long step = next.remaining;
+            decrementActive(step);
+            left -= step;
             next.cancelled = true; // consumed
             next.r.run();          // may post new tasks
             purgeCancelled();
