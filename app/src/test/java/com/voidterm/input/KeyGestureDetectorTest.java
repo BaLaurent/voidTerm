@@ -160,4 +160,71 @@ public class KeyGestureDetectorTest {
         assertEquals(1, events.size());
         assertEquals("VOL_UP:SINGLE", events.get(0)); // emitted immediately (max=1)
     }
+
+    private void armCombo(Gesture... gestures) {
+        Map<KeyId, EnumSet<Gesture>> armed = new EnumMap<>(KeyId.class);
+        EnumSet<Gesture> set = EnumSet.noneOf(Gesture.class);
+        for (Gesture g : gestures) set.add(g);
+        armed.put(KeyId.COMBO, set);
+        detector.setArmed(armed);
+    }
+
+    @Test
+    public void combo_bothKeysWithinWindow_emitsComboSingle() {
+        armCombo(Gesture.SINGLE);
+        detector.onKeyDown(KeyEvent.KEYCODE_VOLUME_UP, ev(0));
+        detector.onKeyDown(KeyEvent.KEYCODE_VOLUME_DOWN, ev(0)); // within window
+        detector.onKeyUp(KeyEvent.KEYCODE_VOLUME_UP, ev(0));
+        detector.onKeyUp(KeyEvent.KEYCODE_VOLUME_DOWN, ev(0));
+        assertEquals(1, events.size());
+        assertEquals("COMBO:SINGLE", events.get(0));
+    }
+
+    @Test
+    public void combo_doubleTap_emitsComboDouble() {
+        armCombo(Gesture.SINGLE, Gesture.DOUBLE);
+        // first combo press
+        detector.onKeyDown(KeyEvent.KEYCODE_VOLUME_UP, ev(0));
+        detector.onKeyDown(KeyEvent.KEYCODE_VOLUME_DOWN, ev(0));
+        detector.onKeyUp(KeyEvent.KEYCODE_VOLUME_UP, ev(0));
+        detector.onKeyUp(KeyEvent.KEYCODE_VOLUME_DOWN, ev(0));
+        // second combo press, within multi-tap window
+        detector.onKeyDown(KeyEvent.KEYCODE_VOLUME_UP, ev(0));
+        detector.onKeyDown(KeyEvent.KEYCODE_VOLUME_DOWN, ev(0));
+        detector.onKeyUp(KeyEvent.KEYCODE_VOLUME_UP, ev(0));
+        detector.onKeyUp(KeyEvent.KEYCODE_VOLUME_DOWN, ev(0));
+        assertEquals(1, events.size());
+        assertEquals("COMBO:DOUBLE", events.get(0));
+    }
+
+    @Test
+    public void combo_windowExpiresAlone_fallsBackToSingleKey() {
+        // Combo armed AND Vol+ has its own double-tap armed.
+        Map<KeyId, EnumSet<Gesture>> armed = new EnumMap<>(KeyId.class);
+        armed.put(KeyId.COMBO, EnumSet.of(Gesture.SINGLE));
+        armed.put(KeyId.VOL_UP, EnumSet.of(Gesture.DOUBLE));
+        detector.setArmed(armed);
+
+        detector.onKeyDown(KeyEvent.KEYCODE_VOLUME_UP, ev(0));
+        scheduler.advance(GestureTiming.NORMAL.comboWindowMs); // window expires, no partner
+        detector.onKeyUp(KeyEvent.KEYCODE_VOLUME_UP, ev(0));    // -> individual tap
+        scheduler.advance(GestureTiming.NORMAL.multiTapWindowMs);
+        assertEquals(1, events.size());
+        assertEquals("VOL_UP:SINGLE", events.get(0));
+    }
+
+    @Test
+    public void combo_releaseDuringWindow_resolvesAsSingleKeyTap() {
+        Map<KeyId, EnumSet<Gesture>> armed = new EnumMap<>(KeyId.class);
+        armed.put(KeyId.COMBO, EnumSet.of(Gesture.SINGLE));
+        armed.put(KeyId.VOL_DOWN, EnumSet.of(Gesture.DOUBLE));
+        detector.setArmed(armed);
+
+        detector.onKeyDown(KeyEvent.KEYCODE_VOLUME_DOWN, ev(0));
+        detector.onKeyUp(KeyEvent.KEYCODE_VOLUME_DOWN, ev(0)); // released inside window
+        scheduler.advance(GestureTiming.NORMAL.comboWindowMs);  // window expires
+        scheduler.advance(GestureTiming.NORMAL.multiTapWindowMs);
+        assertEquals(1, events.size());
+        assertEquals("VOL_DOWN:SINGLE", events.get(0));
+    }
 }

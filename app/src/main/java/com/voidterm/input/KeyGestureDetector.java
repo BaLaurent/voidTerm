@@ -131,11 +131,21 @@ public final class KeyGestureDetector {
     }
 
     private void handleDown(KeyId k) {
-        beginKeyPress(k);
+        if ((k == KeyId.VOL_UP || k == KeyId.VOL_DOWN) && comboArmed()) {
+            handleVolumeDownWithCombo(k);
+        } else {
+            beginKeyPress(k);
+        }
     }
 
     private void handleUp(KeyId k) {
-        endKeyPress(k);
+        KeyState s = keyStates.get(k);
+        if ((k == KeyId.VOL_UP || k == KeyId.VOL_DOWN) && comboArmed()
+                && (s.comboPending || comboEngaged)) {
+            handleVolumeUpWithCombo(k);
+        } else {
+            endKeyPress(k);
+        }
     }
 
     private void beginKeyPress(KeyId k) {
@@ -157,12 +167,96 @@ public final class KeyGestureDetector {
         listener.onGesture(k, Gesture.LONG);
     }
 
+    private static KeyId otherVolume(KeyId k) {
+        return (k == KeyId.VOL_UP) ? KeyId.VOL_DOWN : KeyId.VOL_UP;
+    }
+
+    private void handleVolumeDownWithCombo(KeyId k) {
+        KeyState s = keyStates.get(k);
+        KeyState os = keyStates.get(otherVolume(k));
+        s.down = true;
+        scheduler.cancel(s.multiTapToken); // continuing a sequence
+        s.multiTapToken = null;
+
+        if (os.comboPending) {
+            // partner is waiting in its window -> engage combo
+            scheduler.cancel(comboWindowToken);
+            scheduler.cancel(comboMultiTapToken); // continuing a combo sequence
+            comboMultiTapToken = null;
+            comboWindowToken = null;
+            os.comboPending = false;
+            s.comboPending = false;
+            comboEngaged = true;
+            return;
+        }
+
+        // open a combo window for this key
+        s.comboPending = true;
+        comboWindowToken = scheduler.postDelayed(() -> promoteToIndividual(k), timing.comboWindowMs);
+    }
+
+    /** Combo window expired with no partner: treat as an individual key press. */
+    private void promoteToIndividual(KeyId k) {
+        KeyState s = keyStates.get(k);
+        s.comboPending = false;
+        comboWindowToken = null;
+        if (s.down) {
+            if (armedHas(k, Gesture.LONG)) {
+                s.longToken = scheduler.postDelayed(() -> fireLong(k), timing.longPressMs);
+            }
+        } else {
+            // released during the window -> it was a tap
+            resolveTap(k);
+        }
+    }
+
+    private void handleVolumeUpWithCombo(KeyId k) {
+        KeyState s = keyStates.get(k);
+        s.down = false;
+
+        if (s.comboPending) {
+            // released before the window expired; promoteToIndividual will resolve it
+            return;
+        }
+
+        if (comboEngaged) {
+            if (!keyStates.get(otherVolume(k)).down) {
+                comboEngaged = false;
+                onComboTap();
+            }
+            return;
+        }
+
+        // already promoted to an individual press
+        endKeyPress(k);
+    }
+
+    private void onComboTap() {
+        comboTapCount++;
+        if (comboTapCount >= maxArmedTaps(KeyId.COMBO)) {
+            emitTap(KeyId.COMBO, comboTapCount);
+            comboTapCount = 0;
+        } else {
+            final int snapshot = comboTapCount;
+            comboMultiTapToken = scheduler.postDelayed(() -> {
+                emitTap(KeyId.COMBO, snapshot);
+                comboTapCount = 0;
+                comboMultiTapToken = null;
+            }, timing.multiTapWindowMs);
+        }
+    }
+
     private void endKeyPress(KeyId k) {
         KeyState s = keyStates.get(k);
         s.down = false;
         if (s.longFired) { s.longFired = false; return; }
         scheduler.cancel(s.longToken);
         s.longToken = null;
+        resolveTap(k);
+    }
+
+    private void resolveTap(KeyId k) {
+        KeyState s = keyStates.get(k);
         s.tapCount++;
         if (s.tapCount >= maxArmedTaps(k)) {
             emitTap(k, s.tapCount);
