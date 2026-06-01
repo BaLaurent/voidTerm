@@ -57,7 +57,7 @@ User confirms (Enter) → VoiceInputCallback.onVoiceTextReady() → Terminal PTY
 |---|---|
 | `com.voidterm.contracts` | Shared interfaces: `VoiceState`, `VoiceInputCallback`, `TranscriptionListener`, `ControlPanel`, `ControlPanelListener` |
 | `com.voidterm.voice` | Voice system: `VoiceInputManager`, `AudioCapture`, `AudioPreprocessor`, `AudioConfig`, `WhisperBridge`, `TranscriptionOverlay` |
-| `com.voidterm.input` | Controller mapping: `QuestInputHandler` |
+| `com.voidterm.input` | Controller & physical-key input: `QuestInputHandler`, `KeyGestureDetector`, `GestureTiming`, `Scheduler`/`HandlerScheduler` |
 | `com.voidterm.app` | Activity, UI, styling: `TermuxActivity`, `SessionManager`, `SessionListAdapter`, `GameBoyControlPanel`, `CompactToolbar`, `MacroExecutor`, `MacroEditDialog`, `TerminalStyleDialog`, `SettingsDialog`, `SettingsActivity`, `InterfaceTheme`, `ExtraKeysConfig` |
 
 ### JNI Layer
@@ -227,6 +227,8 @@ The back key behavior is configurable via `SettingsDialog` (Spinner). Four modes
 - **Macro**: same dispatch path, executes a user-defined macro command (stored in "back_key_macro") via `MacroExecutor`. Supports full `{tag}` syntax.
 - **Voice Input**: same dispatch path, calls `onVoiceToggle()` to start/stop voice recording (Push-to-Talk).
 
+These four modes are the **single-tap** slot for the back key. Double/triple/long-press gestures layer on top via `KeyGestureDetector` — see "Key Gesture System" below.
+
 ### Volume Key Behavior
 
 Volume Up and Volume Down are independently configurable via `SettingsActivity` (Spinner). Five modes each, persisted in `SharedPreferences` ("voidterm_settings" / "volume_up_behavior" and "volume_down_behavior"):
@@ -236,7 +238,21 @@ Volume Up and Volume Down are independently configurable via `SettingsActivity` 
 - **Macro**: executes a user-defined macro command (stored in "volume_up_macro" / "volume_down_macro") via `MacroExecutor`. Supports full `{tag}` syntax.
 - **Voice Input**: triggers `onVoiceToggle()`.
 
-Handled entirely in `TermuxActivity.handleCustomVolumeKey(int keyCode)` — no `VoidTermTerminalViewClient` or `TerminalView` layer needed (unlike back key).
+Handled entirely in `TermuxActivity.handleCustomVolumeKey(int keyCode)` — no `VoidTermTerminalViewClient` or `TerminalView` layer needed (unlike back key). These five modes are the **single-tap** slot per volume key; double/triple/long-press and the Vol+&Vol− combo layer on via `KeyGestureDetector` — see "Key Gesture System" below.
+
+### Key Gesture System (multi-tap / long-press / combo)
+
+`KeyGestureDetector` (`com.voidterm.input`) adds double-tap, triple-tap, long-press, and a Vol+&Vol− combo on top of the single-tap behaviors above. It is a pure **timed state machine**: it reads no `SharedPreferences` and never touches the terminal — `TermuxActivity` owns the policy (gesture → action), the detector owns the mechanism (recognize the gesture). Timing is driven by an injected `Scheduler` (`HandlerScheduler` on the main `Looper` in production; a virtual-time `FakeScheduler` in tests), so the whole machine is deterministically unit-tested (`KeyGestureDetectorTest`, 19 tests).
+
+**Slots (15):** Vol+, Vol−, Back each have single/double/triple/long; the combo has single/double/triple (never long). Each slot maps to the existing action set (`default` / `escape` / `toggle_keyboard` / `macro` / `voice_input`). The 3 single-tap slots **reuse the existing keys** (`volume_up_behavior`, `volume_down_behavior`, `back_key_behavior` + their `_macro`) — zero migration. The 12 new slots use `gesture_<key>_<gesture>` keys (+ `_macro`); all constants live in `SettingsDialog`. UI is in `SettingsActivity`: an `addGestureRow(...)` factory (shared spinner+macro row, macro persisted live via a `TextWatcher`), double/triple/long behind a per-key "Advanced" expander, a "Combo (Vol+ & Vol-)" subsection, and a global "Gesture sensitivity" preset spinner.
+
+**Consumption contract (safety-critical):** `onKeyDown`/`onKeyUp` return `true` (consumed) **iff the key is "intercepted"** — it has a double/triple/long armed, or (volume keys) the combo is armed. A key with only its single-tap configured is NOT intercepted, so the legacy `handleCustomBackKey`/`handleCustomVolumeKey` instant path runs (zero added latency — design "decision A"). The interception decision lives in the detector (the tested zone); `TermuxActivity.onKeyDown` just returns its boolean, ordered after `QuestInputHandler` and before the legacy handlers. **Back is safety-critical: when any Back gesture is armed the detector consumes ALL Back events and emits `\033` for the single-tap escape itself** — an un-consumed Back would reach `super.onKeyDown` and close the Activity.
+
+**Timing presets** (`GestureTiming.fromPreset`, pref `gesture_timing_preset`): Reactif 200/400/50, Normal 280/500/60, Tolerant 400/700/90 ms (multi-tap window / long-press / combo window). Resolution: emit immediately when the armed max tap count is reached, else wait the multi-tap window; long-press fires once at threshold and suppresses the release tap; a combo-armed volume down opens a combo window — partner down within the window → combo (own single/double/triple counting), else the press is *promoted* to the individual key (its long/multi-tap still work).
+
+**Volume emulation (option B):** when an intercepted volume key's resolved behavior is `default`, `TermuxActivity.onGestureResolved` calls `adjustVolume()` (`AudioManager.adjustStreamVolume`, `STREAM_MUSIC`, `FLAG_SHOW_UI`) so system volume is preserved alongside the added gestures.
+
+**Dispatch & lifecycle:** the behavior switch shared by the legacy handlers and the gesture listener is extracted into `TermuxActivity.dispatchKeyAction(behavior, macroPrefKey)` (returns false on `default`/unknown so the caller decides). `refreshGestureConfig()` (onCreate + onResume) rebuilds the armed-set + timing from prefs; `gestureDetector.reset()` (onPause + onDestroy) cancels all pending timers.
 
 ### Lifecycle & Error Recovery
 
