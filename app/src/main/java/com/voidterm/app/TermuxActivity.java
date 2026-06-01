@@ -12,7 +12,9 @@ import android.graphics.Color;
 import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.os.Bundle;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.ContextMenu;
@@ -36,12 +38,18 @@ import androidx.drawerlayout.widget.DrawerLayout;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.util.EnumMap;
+import java.util.EnumSet;
+import java.util.Map;
 
 import com.termux.terminal.TerminalSession;
 import com.termux.view.TerminalView;
 import com.voidterm.contracts.ControlPanelListener;
 import com.voidterm.contracts.VoiceInputCallback;
 import com.voidterm.contracts.VoiceState;
+import com.voidterm.input.GestureTiming;
+import com.voidterm.input.HandlerScheduler;
+import com.voidterm.input.KeyGestureDetector;
 import com.voidterm.input.QuestInputHandler;
 import com.voidterm.voice.TranscriptionOverlay;
 import com.voidterm.voice.VoiceInputManager;
@@ -65,6 +73,7 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
     private DiagnosticLog diagnosticLog;
     private VoiceInputManager voiceInputManager;
     private QuestInputHandler questInputHandler;
+    private KeyGestureDetector gestureDetector;
     private TranscriptionOverlay transcriptionOverlay;
     private ExtraKeysConfig extraKeysConfig;
     private PanelController panelController;
@@ -486,6 +495,10 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         } catch (Exception e) {
             Log.e(TAG, "Failed to create QuestInputHandler", e);
         }
+        gestureDetector = new KeyGestureDetector(
+                new HandlerScheduler(new Handler(Looper.getMainLooper())),
+                this::onGestureResolved);
+        refreshGestureConfig();
     }
 
     private void initExtraKeys() {
@@ -632,6 +645,9 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         if (questInputHandler != null && questInputHandler.onKeyDown(keyCode, event)) {
             return true;
         }
+        if (gestureDetector != null && gestureDetector.onKeyDown(keyCode, event)) {
+            return true;
+        }
         if (keyCode == KeyEvent.KEYCODE_BACK && handleCustomBackKey()) {
             return true;
         }
@@ -711,9 +727,126 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         }
     }
 
+    /** Rebuilds the detector's armed-set + timing from SharedPreferences. */
+    private void refreshGestureConfig() {
+        if (gestureDetector == null) return;
+        SharedPreferences prefs = getSharedPreferences(SettingsDialog.PREFS_NAME, MODE_PRIVATE);
+
+        Map<KeyGestureDetector.KeyId, EnumSet<KeyGestureDetector.Gesture>> armed =
+                new EnumMap<>(KeyGestureDetector.KeyId.class);
+        armed.put(KeyGestureDetector.KeyId.VOL_UP, armedFor(prefs,
+                SettingsDialog.KEY_VOLUP_DOUBLE, SettingsDialog.KEY_VOLUP_TRIPLE, SettingsDialog.KEY_VOLUP_LONG));
+        armed.put(KeyGestureDetector.KeyId.VOL_DOWN, armedFor(prefs,
+                SettingsDialog.KEY_VOLDOWN_DOUBLE, SettingsDialog.KEY_VOLDOWN_TRIPLE, SettingsDialog.KEY_VOLDOWN_LONG));
+        armed.put(KeyGestureDetector.KeyId.BACK, armedFor(prefs,
+                SettingsDialog.KEY_BACK_DOUBLE, SettingsDialog.KEY_BACK_TRIPLE, SettingsDialog.KEY_BACK_LONG));
+        armed.put(KeyGestureDetector.KeyId.COMBO, comboArmedFor(prefs));
+        gestureDetector.setArmed(armed);
+
+        gestureDetector.setTiming(GestureTiming.fromPreset(
+                prefs.getString(SettingsDialog.KEY_GESTURE_TIMING_PRESET, SettingsDialog.PRESET_NORMAL)));
+    }
+
+    private static boolean isConfigured(SharedPreferences prefs, String key) {
+        return !SettingsDialog.VOLUME_DEFAULT.equals(
+                prefs.getString(key, SettingsDialog.VOLUME_DEFAULT));
+    }
+
+    private static EnumSet<KeyGestureDetector.Gesture> armedFor(SharedPreferences prefs,
+            String doubleKey, String tripleKey, String longKey) {
+        EnumSet<KeyGestureDetector.Gesture> set =
+                EnumSet.noneOf(KeyGestureDetector.Gesture.class);
+        if (isConfigured(prefs, doubleKey)) set.add(KeyGestureDetector.Gesture.DOUBLE);
+        if (isConfigured(prefs, tripleKey)) set.add(KeyGestureDetector.Gesture.TRIPLE);
+        if (isConfigured(prefs, longKey)) set.add(KeyGestureDetector.Gesture.LONG);
+        return set;
+    }
+
+    private static EnumSet<KeyGestureDetector.Gesture> comboArmedFor(SharedPreferences prefs) {
+        EnumSet<KeyGestureDetector.Gesture> set =
+                EnumSet.noneOf(KeyGestureDetector.Gesture.class);
+        if (isConfigured(prefs, SettingsDialog.KEY_COMBO_SINGLE)) set.add(KeyGestureDetector.Gesture.SINGLE);
+        if (isConfigured(prefs, SettingsDialog.KEY_COMBO_DOUBLE)) set.add(KeyGestureDetector.Gesture.DOUBLE);
+        if (isConfigured(prefs, SettingsDialog.KEY_COMBO_TRIPLE)) set.add(KeyGestureDetector.Gesture.TRIPLE);
+        return set;
+    }
+
+    /** Maps a resolved (key, gesture) to the behavior preference key. */
+    private static String behaviorPrefKey(KeyGestureDetector.KeyId key, KeyGestureDetector.Gesture g) {
+        switch (key) {
+            case VOL_UP:
+                if (g == KeyGestureDetector.Gesture.SINGLE) return SettingsDialog.KEY_VOLUME_UP_BEHAVIOR;
+                if (g == KeyGestureDetector.Gesture.DOUBLE) return SettingsDialog.KEY_VOLUP_DOUBLE;
+                if (g == KeyGestureDetector.Gesture.TRIPLE) return SettingsDialog.KEY_VOLUP_TRIPLE;
+                return SettingsDialog.KEY_VOLUP_LONG;
+            case VOL_DOWN:
+                if (g == KeyGestureDetector.Gesture.SINGLE) return SettingsDialog.KEY_VOLUME_DOWN_BEHAVIOR;
+                if (g == KeyGestureDetector.Gesture.DOUBLE) return SettingsDialog.KEY_VOLDOWN_DOUBLE;
+                if (g == KeyGestureDetector.Gesture.TRIPLE) return SettingsDialog.KEY_VOLDOWN_TRIPLE;
+                return SettingsDialog.KEY_VOLDOWN_LONG;
+            case BACK:
+                if (g == KeyGestureDetector.Gesture.SINGLE) return SettingsDialog.KEY_BACK_BEHAVIOR;
+                if (g == KeyGestureDetector.Gesture.DOUBLE) return SettingsDialog.KEY_BACK_DOUBLE;
+                if (g == KeyGestureDetector.Gesture.TRIPLE) return SettingsDialog.KEY_BACK_TRIPLE;
+                return SettingsDialog.KEY_BACK_LONG;
+            case COMBO:
+            default:
+                if (g == KeyGestureDetector.Gesture.DOUBLE) return SettingsDialog.KEY_COMBO_DOUBLE;
+                if (g == KeyGestureDetector.Gesture.TRIPLE) return SettingsDialog.KEY_COMBO_TRIPLE;
+                return SettingsDialog.KEY_COMBO_SINGLE;
+        }
+    }
+
+    private static String macroPrefKey(KeyGestureDetector.KeyId key, KeyGestureDetector.Gesture g) {
+        switch (key) {
+            case VOL_UP:
+                if (g == KeyGestureDetector.Gesture.SINGLE) return SettingsDialog.KEY_VOLUME_UP_MACRO;
+                if (g == KeyGestureDetector.Gesture.DOUBLE) return SettingsDialog.KEY_VOLUP_DOUBLE_MACRO;
+                if (g == KeyGestureDetector.Gesture.TRIPLE) return SettingsDialog.KEY_VOLUP_TRIPLE_MACRO;
+                return SettingsDialog.KEY_VOLUP_LONG_MACRO;
+            case VOL_DOWN:
+                if (g == KeyGestureDetector.Gesture.SINGLE) return SettingsDialog.KEY_VOLUME_DOWN_MACRO;
+                if (g == KeyGestureDetector.Gesture.DOUBLE) return SettingsDialog.KEY_VOLDOWN_DOUBLE_MACRO;
+                if (g == KeyGestureDetector.Gesture.TRIPLE) return SettingsDialog.KEY_VOLDOWN_TRIPLE_MACRO;
+                return SettingsDialog.KEY_VOLDOWN_LONG_MACRO;
+            case BACK:
+                if (g == KeyGestureDetector.Gesture.SINGLE) return SettingsDialog.KEY_BACK_MACRO;
+                if (g == KeyGestureDetector.Gesture.DOUBLE) return SettingsDialog.KEY_BACK_DOUBLE_MACRO;
+                if (g == KeyGestureDetector.Gesture.TRIPLE) return SettingsDialog.KEY_BACK_TRIPLE_MACRO;
+                return SettingsDialog.KEY_BACK_LONG_MACRO;
+            case COMBO:
+            default:
+                if (g == KeyGestureDetector.Gesture.DOUBLE) return SettingsDialog.KEY_COMBO_DOUBLE_MACRO;
+                if (g == KeyGestureDetector.Gesture.TRIPLE) return SettingsDialog.KEY_COMBO_TRIPLE_MACRO;
+                return SettingsDialog.KEY_COMBO_SINGLE_MACRO;
+        }
+    }
+
+    /** Called on the main thread by the gesture detector. */
+    private void onGestureResolved(KeyGestureDetector.KeyId key, KeyGestureDetector.Gesture gesture) {
+        SharedPreferences prefs = getSharedPreferences(SettingsDialog.PREFS_NAME, MODE_PRIVATE);
+        String behaviorKey = behaviorPrefKey(key, gesture);
+        // Single tap of Back defaults to Escape; everything else defaults to "none".
+        String defaultBehavior = (key == KeyGestureDetector.KeyId.BACK
+                && gesture == KeyGestureDetector.Gesture.SINGLE)
+                ? SettingsDialog.BACK_ESCAPE : SettingsDialog.VOLUME_DEFAULT;
+        String behavior = prefs.getString(behaviorKey, defaultBehavior);
+
+        boolean handled = dispatchKeyAction(behavior, macroPrefKey(key, gesture));
+        if (!handled) {
+            // behavior == default: emulate system volume for the volume keys
+            if (key == KeyGestureDetector.KeyId.VOL_UP) adjustVolume(true);
+            else if (key == KeyGestureDetector.KeyId.VOL_DOWN) adjustVolume(false);
+            // BACK / COMBO default -> nothing
+        }
+    }
+
     @Override
     public boolean onKeyUp(int keyCode, KeyEvent event) {
         if (questInputHandler != null && questInputHandler.onKeyUp(keyCode, event)) {
+            return true;
+        }
+        if (gestureDetector != null && gestureDetector.onKeyUp(keyCode, event)) {
             return true;
         }
         return super.onKeyUp(keyCode, event);
@@ -1102,6 +1235,7 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
                 voiceInputManager.onDoubleTap();
             }
         }
+        if (gestureDetector != null) gestureDetector.reset();
     }
 
     @Override
@@ -1118,6 +1252,7 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
             applyTheme();
         }
         updatePanelVisibility();
+        refreshGestureConfig();
     }
 
     @Override
