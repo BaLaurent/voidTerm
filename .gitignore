@@ -35,3 +35,6 @@ licenses/
 keystore.properties
 *.keystore
 *.jks
+
+# Local release build artifacts (APKs, generated release notes)
+dist/
