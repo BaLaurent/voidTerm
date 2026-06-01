@@ -40,6 +40,13 @@ faire » (aucun volume système possible à deux touches).
 4. **Pas de retour haptique** sur l'appui long (hors périmètre).
 5. **Zéro migration** : les 3 clés de prefs existantes deviennent le slot « simple » de leur
    touche, on n'y touche pas.
+6. **Volume système préservé (option B — émulation).** Comme la détection consomme le key-down
+   d'une touche volume (on avale donc le volume système), quand le simple tap résolu vaut `default`
+   on **reproduit** le volume système via `AudioManager.adjustStreamVolume(STREAM_MUSIC, raise/lower,
+   FLAG_SHOW_UI)`. L'utilisateur garde le volume sur simple tap *et* gagne double/triple/long.
+7. **Back est sécurité-critique.** Dès qu'un geste est armé sur Back, on consomme **tous** les
+   events Back et on émet `\033` nous-mêmes : un event Back non consommé partirait dans `super` et
+   **fermerait l'Activity**.
 
 ## Architecture
 
@@ -132,9 +139,14 @@ Le `switch` sur le behavior est aujourd'hui dupliqué dans `handleCustomBackKey(
 Extraire :
 
 ```
-boolean dispatchKeyAction(String behavior, String macroPrefKey)
-   // escape | toggle_keyboard | macro | voice_input ; default → false (non consommé)
+void dispatchKeyAction(KeyId key, String behavior, String macroPrefKey)
+   // escape | toggle_keyboard | macro | voice_input
+   // default → si key est un volume : AudioManager.adjustStreamVolume(raise/lower) ; sinon no-op
 ```
+
+`KeyId` est passé pour que la branche `default` sache émuler le bon sens du volume (raise pour
+`VOL_UP`, lower pour `VOL_DOWN`). Dans le chemin non-armé hérité (volume non intercepté),
+`default` reste un `return false` classique côté `handleCustomVolumeKey`.
 
 Flux complet après refactor :
 
@@ -147,12 +159,37 @@ onKeyDown / onKeyUp
    → dispatchKeyAction(behavior, macroKey)
 ```
 
-Le slot « simple » de Vol+/Vol−/Back continue de lire les clés existantes ; le cas `BACK_ESCAPE`
-en simple tap peut soit déléguer à `TerminalView` (comportement actuel via
-`shouldBackButtonBeMappedToEscape`) lorsque aucun autre geste n'est armé sur Back, soit envoyer
-`\033` directement lorsque Back est intercepté pour la détection de gestes. Le plan
-d'implémentation tranchera le détail en lisant le chemin de dispatch existant ; le comportement
-observable du simple tap reste identique.
+Le slot « simple » de Vol+/Vol−/Back continue de lire les clés existantes.
+
+## Contrat de consommation `onKeyDown` / `onKeyUp` (zone critique, non testée auto)
+
+`onKeyDown` est **synchrone** : il doit retourner `true` (consommé) ou `false` (laissé à
+`super`/`TerminalView`) immédiatement, alors que la détection de geste doit attendre. La règle de
+retour est donc dictée par l'état « armé » de la touche, fourni par `setArmed(...)`.
+
+**La décision « consommer ou non » vit dans `KeyGestureDetector`, pas dans `TermuxActivity`** :
+`detector.onKeyDown(...)` renvoie `true` ssi la touche est armée, et `TermuxActivity.onKeyDown`
+retourne simplement cette valeur. Ainsi la logique critique de consommation est dans le module
+**testé** (Robolectric), pas dans la zone Activity non couverte ; `TermuxActivity` ne fait que
+relayer le booléen et exécuter l'action émise (policy).
+
+| Situation de la touche | key-down retourne | Action |
+|---|---|---|
+| **Aucun geste armé** (sauf le simple) | `false` si simple = `default` (volume) ; sinon traité au key-down et `true` | comportement actuel, aucune interception |
+| **Au moins un geste armé** (double/triple/long, ou combo pour un volume) | **toujours `true`** | l'event est mis en file dans le détecteur ; rien ne part vers `super` |
+
+Conséquences imposées (pas des choix) :
+
+- **Back armé → tout consommer.** On n'émet jamais `false` pour un Back armé, sinon l'event ferme
+  l'Activity. Le simple tap `escape` est produit par nous via `current.write("\033")` (et non par
+  délégation à `TerminalView`, qui ne verrait jamais l'event). Quand **aucun** geste n'est armé sur
+  Back, on conserve le chemin actuel (délégation `shouldBackButtonBeMappedToEscape` possible).
+- **Volume armé → tout consommer → émuler le volume.** Le key-down volume est avalé ; si le geste
+  résolu est le simple tap mappé `default`, `dispatchKeyAction` appelle
+  `AudioManager.adjustStreamVolume(STREAM_MUSIC, ADJUST_RAISE/LOWER, FLAG_SHOW_UI)` (décision 6).
+  La distinction Vol+ vs Vol− pour raise/lower est connue du slot émetteur.
+- **`reset()` en `onPause`** : si des events sont en file (touche enfoncée au moment du pause), les
+  timers sont annulés sans émettre de geste — évite un état bloqué.
 
 ## UI (`SettingsActivity`, layout programmatique, accordéon)
 
@@ -203,6 +240,8 @@ Tests unitaires Robolectric sur `KeyGestureDetector` (shadow looper pour avancer
 - combo multi-tap → `COMBO/DOUBLE`, `COMBO/TRIPLE`
 - fenêtre combo expirée (une seule touche) → retombe sur la touche seule
 - `reset()` annule tous les timers en attente
+- **contrat de consommation** : `onKeyDown` renvoie `true` ssi la touche est armée, `false` sinon
+  (couvre la sécurité Back et le passthrough volume non-armé sans toucher à l'Activity)
 
 Le dispatch (`TermuxActivity`) reste en **test manuel sur Quest** (convention projet :
 l'intégration se teste à la main).
