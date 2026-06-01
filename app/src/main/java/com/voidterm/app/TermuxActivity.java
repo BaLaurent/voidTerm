@@ -20,6 +20,7 @@ import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MenuItem;
 import android.view.View;
+import android.media.AudioManager;
 import android.view.inputmethod.InputMethodManager;
 import android.util.TypedValue;
 import android.view.ViewGroup;
@@ -645,68 +646,48 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
         SharedPreferences prefs = getSharedPreferences(SettingsDialog.PREFS_NAME, MODE_PRIVATE);
         String behavior = prefs.getString(SettingsDialog.KEY_BACK_BEHAVIOR, SettingsDialog.BACK_ESCAPE);
 
+        // Escape on the back key keeps delegating to TerminalView (unchanged).
         if (SettingsDialog.BACK_ESCAPE.equals(behavior)) {
-            return false; // let TerminalView handle it
+            return false;
         }
-
-        if (SettingsDialog.BACK_TOGGLE_KEYBOARD.equals(behavior)) {
-            InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
-            if (imm != null) {
-                imm.toggleSoftInput(InputMethodManager.SHOW_IMPLICIT, 0);
-            }
-            return true;
-        }
-
-        if (SettingsDialog.BACK_MACRO.equals(behavior)) {
-            String macro = prefs.getString(SettingsDialog.KEY_BACK_MACRO, "");
-            TerminalSession current = getCurrentSession();
-            if (!macro.isEmpty() && current != null) {
-                MacroExecutor.execute(macro, current::write,
-                        terminalView != null ? terminalView.getHandler() : null);
-            }
-            return true;
-        }
-
-        if (SettingsDialog.BACK_VOICE.equals(behavior)) {
-            onVoiceToggle();
-            return true;
-        }
-
-        return false;
+        return dispatchKeyAction(behavior, SettingsDialog.KEY_BACK_MACRO);
     }
 
     private boolean handleCustomVolumeKey(int keyCode) {
         SharedPreferences prefs = getSharedPreferences(SettingsDialog.PREFS_NAME, MODE_PRIVATE);
-        String key = (keyCode == KeyEvent.KEYCODE_VOLUME_UP)
-                ? SettingsDialog.KEY_VOLUME_UP_BEHAVIOR
-                : SettingsDialog.KEY_VOLUME_DOWN_BEHAVIOR;
-        String behavior = prefs.getString(key, SettingsDialog.VOLUME_DEFAULT);
+        boolean up = keyCode == KeyEvent.KEYCODE_VOLUME_UP;
+        String behaviorKey = up
+                ? SettingsDialog.KEY_VOLUME_UP_BEHAVIOR : SettingsDialog.KEY_VOLUME_DOWN_BEHAVIOR;
+        String behavior = prefs.getString(behaviorKey, SettingsDialog.VOLUME_DEFAULT);
 
         if (SettingsDialog.VOLUME_DEFAULT.equals(behavior)) {
-            return false;
+            return false; // let the system handle volume
         }
+        String macroKey = up
+                ? SettingsDialog.KEY_VOLUME_UP_MACRO : SettingsDialog.KEY_VOLUME_DOWN_MACRO;
+        return dispatchKeyAction(behavior, macroKey);
+    }
 
+    /**
+     * Executes a behavior shared by the back/volume keys and the gesture slots.
+     * Returns true if it acted; false if {@code behavior} is the "default"
+     * sentinel (the caller decides what default means in its context).
+     */
+    private boolean dispatchKeyAction(String behavior, String macroPrefKey) {
         if (SettingsDialog.BACK_ESCAPE.equals(behavior)) {
             TerminalSession current = getCurrentSession();
-            if (current != null) {
-                current.write("\033");
-            }
+            if (current != null) current.write("\033");
             return true;
         }
-
         if (SettingsDialog.BACK_TOGGLE_KEYBOARD.equals(behavior)) {
-            InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
-            if (imm != null) {
-                imm.toggleSoftInput(InputMethodManager.SHOW_IMPLICIT, 0);
-            }
+            InputMethodManager imm =
+                    (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (imm != null) imm.toggleSoftInput(InputMethodManager.SHOW_IMPLICIT, 0);
             return true;
         }
-
         if (SettingsDialog.BACK_MACRO.equals(behavior)) {
-            String macroKey = (keyCode == KeyEvent.KEYCODE_VOLUME_UP)
-                    ? SettingsDialog.KEY_VOLUME_UP_MACRO
-                    : SettingsDialog.KEY_VOLUME_DOWN_MACRO;
-            String macro = prefs.getString(macroKey, "");
+            SharedPreferences prefs = getSharedPreferences(SettingsDialog.PREFS_NAME, MODE_PRIVATE);
+            String macro = prefs.getString(macroPrefKey, "");
             TerminalSession current = getCurrentSession();
             if (!macro.isEmpty() && current != null) {
                 MacroExecutor.execute(macro, current::write,
@@ -714,13 +695,20 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
             }
             return true;
         }
-
         if (SettingsDialog.BACK_VOICE.equals(behavior)) {
             onVoiceToggle();
             return true;
         }
+        return false; // default / unknown
+    }
 
-        return false;
+    private void adjustVolume(boolean raise) {
+        AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        if (am != null) {
+            am.adjustStreamVolume(AudioManager.STREAM_MUSIC,
+                    raise ? AudioManager.ADJUST_RAISE : AudioManager.ADJUST_LOWER,
+                    AudioManager.FLAG_SHOW_UI);
+        }
     }
 
     @Override
