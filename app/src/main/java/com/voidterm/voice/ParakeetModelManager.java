@@ -72,9 +72,11 @@ public class ParakeetModelManager {
             File f = new File(modelDir, file);
             if (f.exists()) f.delete();
         }
-        File[] temps = modelDir.listFiles((dir, name) -> name.endsWith(".tmp"));
-        if (temps != null) {
-            for (File t : temps) t.delete();
+        // Only clean up THIS quantization's temp files — never another quantization's
+        // in-progress download.
+        for (String file : q.specificFiles()) {
+            File tmp = new File(modelDir, file + ".tmp");
+            if (tmp.exists()) tmp.delete();
         }
     }
 

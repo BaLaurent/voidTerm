@@ -33,6 +33,7 @@ import androidx.core.content.ContextCompat;
 
 import com.voidterm.voice.DeviceProfiler;
 import com.voidterm.voice.ParakeetModelManager;
+import com.voidterm.voice.ParakeetQuantization;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -186,7 +187,7 @@ public class SettingsActivity extends Activity {
             if (jobId != null) {
                 if (com.voidterm.voice.WhisperModelCatalog.byFileName(jobId) != null && whisperCatalogView != null) {
                     whisperCatalogView.onProgress(jobId, last != null ? last : "Downloading…");
-                } else if (com.voidterm.voice.ParakeetQuantization.byId(jobId) != null
+                } else if (ParakeetQuantization.byId(jobId) != null
                         && parakeetQuantizationView != null) {
                     parakeetQuantizationView.onProgress(jobId, last != null ? last : "Downloading…");
                 }
@@ -360,7 +361,7 @@ public class SettingsActivity extends Activity {
                 SettingsDialog.PARAKEET_QUANT_DEFAULT);
         parakeetQuantizationView = new ParakeetQuantizationView(this,
                 new ParakeetQuantizationView.Listener() {
-            @Override public void onDownload(com.voidterm.voice.ParakeetQuantization q) {
+            @Override public void onDownload(ParakeetQuantization q) {
                 if (ModelDownloadService.isRunning()) return; // one download at a time
                 startForegroundService(new Intent(SettingsActivity.this, ModelDownloadService.class)
                         .setAction(ModelDownloadService.ACTION_START_DOWNLOAD)
@@ -368,10 +369,10 @@ public class SettingsActivity extends Activity {
                         .putExtra(ModelDownloadService.EXTRA_MODEL_ID, q.id));
                 parakeetQuantizationView.onProgress(q.id, "Starting…");
             }
-            @Override public void onActivate(com.voidterm.voice.ParakeetQuantization q) {
+            @Override public void onActivate(ParakeetQuantization q) {
                 activateParakeetQuant(q.id);
             }
-            @Override public void onDelete(com.voidterm.voice.ParakeetQuantization q) {
+            @Override public void onDelete(ParakeetQuantization q) {
                 confirmDeleteParakeetQuant(q);
             }
         }, activeQuant, textColor, mutedColor);
@@ -415,7 +416,7 @@ public class SettingsActivity extends Activity {
         if (parakeetQuantizationView != null) parakeetQuantizationView.setActive(quantId);
     }
 
-    private void confirmDeleteParakeetQuant(com.voidterm.voice.ParakeetQuantization q) {
+    private void confirmDeleteParakeetQuant(ParakeetQuantization q) {
         new AlertDialog.Builder(this)
                 .setTitle("Delete Parakeet " + q.displayName + "?")
                 .setMessage("Removes the " + q.displayName + " files (" + q.sizeMb + " MB).")
@@ -423,19 +424,22 @@ public class SettingsActivity extends Activity {
                 .setPositiveButton("Delete", (d, w) -> {
                     String active = prefs.getString(SettingsDialog.KEY_PARAKEET_QUANTIZATION,
                             SettingsDialog.PARAKEET_QUANT_DEFAULT);
-                    com.voidterm.voice.ParakeetModelManager.deleteModels(this, q);
+                    ParakeetModelManager.deleteModels(this, q);
                     if (q.id.equals(active)) {
                         // Active deleted: fall back to the other downloaded quantization, else int8.
                         String next = SettingsDialog.PARAKEET_QUANT_DEFAULT;
-                        for (com.voidterm.voice.ParakeetQuantization other
-                                : com.voidterm.voice.ParakeetQuantization.ALL) {
+                        for (ParakeetQuantization other
+                                : ParakeetQuantization.ALL) {
                             if (!other.id.equals(q.id)
-                                    && com.voidterm.voice.ParakeetModelManager.isModelComplete(this, other)) {
+                                    && ParakeetModelManager.isModelComplete(this, other)) {
                                 next = other.id;
                                 break;
                             }
                         }
-                        prefs.edit().putString(SettingsDialog.KEY_PARAKEET_QUANTIZATION, next).apply();
+                        prefs.edit()
+                                .putString(SettingsDialog.KEY_PARAKEET_QUANTIZATION, next)
+                                .putBoolean(SettingsDialog.KEY_MODEL_RELOAD_REQUESTED, true)
+                                .apply();
                         if (parakeetQuantizationView != null) parakeetQuantizationView.setActive(next);
                     } else if (parakeetQuantizationView != null) {
                         parakeetQuantizationView.setActive(active);
