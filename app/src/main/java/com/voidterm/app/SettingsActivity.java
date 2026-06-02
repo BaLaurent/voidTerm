@@ -380,9 +380,8 @@ public class SettingsActivity extends Activity {
         parakeetControls.addView(parakeetQuantizationView);
 
         TextView fp32Warning = new TextView(this);
-        fp32Warning.setText(fp32WarningText());
+        applyFp32Warning(fp32Warning);
         fp32Warning.setTextSize(12);
-        fp32Warning.setTextColor(0xFFFF9800);
         fp32Warning.setPadding(0, dp(8), 0, dp(8));
         parakeetControls.addView(fp32Warning);
 
@@ -409,26 +408,32 @@ public class SettingsActivity extends Activity {
     }
 
     /**
-     * fp32 RAM warning, adapted to THIS device's total memory rather than a hardcoded
+     * Configure the fp32 memory note from THIS device's total RAM rather than a hardcoded
      * Quest figure — the recommendation depends on the hardware it runs on. fp32 loads
-     * ~2.5 GB of weights into native memory plus ONNX inference overhead.
+     * ~2.5 GB of weights into native memory plus ONNX inference overhead. Green when memory
+     * is ample (>= 8 GB), orange when fp32 may be tight or unsafe.
      */
-    private String fp32WarningText() {
+    private void applyFp32Warning(TextView tv) {
         ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
         ActivityManager.MemoryInfo mi = new ActivityManager.MemoryInfo();
         am.getMemoryInfo(mi);
         double totalGb = mi.totalMem / (1024.0 * 1024.0 * 1024.0);
         String reco;
+        int color;
         if (totalGb < 4.0) {
-            reco = "déconseillé sur cet appareil (risque de saturation mémoire)";
+            reco = "not recommended (likely out of memory)";
+            color = 0xFFFF9800; // orange
         } else if (totalGb < 8.0) {
-            reco = "à utiliser avec prudence sur cet appareil";
+            reco = "may be tight — use with caution";
+            color = 0xFFFF9800; // orange
         } else {
-            reco = "devrait passer sur cet appareil";
+            reco = "sufficient";
+            color = 0xFF4CAF50; // green
         }
-        return String.format(java.util.Locale.US,
-                "⚠ fp32 charge ~2,5 Go en mémoire (int8 ~0,65 Go). Appareil : %.1f Go de RAM — %s.",
-                totalGb, reco);
+        tv.setText(String.format(java.util.Locale.US,
+                "fp32 uses ~2.5 GB of memory (int8 ~0.65 GB). This device has %.1f GB RAM — %s.",
+                totalGb, reco));
+        tv.setTextColor(color);
     }
 
     /** Activate a downloaded quantization: write the pref + request a full engine reload. */
