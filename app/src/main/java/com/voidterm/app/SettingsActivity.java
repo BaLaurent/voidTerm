@@ -1,6 +1,7 @@
 package com.voidterm.app;
 
 import android.app.Activity;
+import android.app.ActivityManager;
 import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -379,7 +380,7 @@ public class SettingsActivity extends Activity {
         parakeetControls.addView(parakeetQuantizationView);
 
         TextView fp32Warning = new TextView(this);
-        fp32Warning.setText("⚠ fp32 : très lourd, peut ramer / saturer la mémoire sur Quest 2 (6 Go).");
+        fp32Warning.setText(fp32WarningText());
         fp32Warning.setTextSize(12);
         fp32Warning.setTextColor(0xFFFF9800);
         fp32Warning.setPadding(0, dp(8), 0, dp(8));
@@ -405,6 +406,29 @@ public class SettingsActivity extends Activity {
         });
 
         return body;
+    }
+
+    /**
+     * fp32 RAM warning, adapted to THIS device's total memory rather than a hardcoded
+     * Quest figure — the recommendation depends on the hardware it runs on. fp32 loads
+     * ~2.5 GB of weights into native memory plus ONNX inference overhead.
+     */
+    private String fp32WarningText() {
+        ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+        ActivityManager.MemoryInfo mi = new ActivityManager.MemoryInfo();
+        am.getMemoryInfo(mi);
+        double totalGb = mi.totalMem / (1024.0 * 1024.0 * 1024.0);
+        String reco;
+        if (totalGb < 4.0) {
+            reco = "déconseillé sur cet appareil (risque de saturation mémoire)";
+        } else if (totalGb < 8.0) {
+            reco = "à utiliser avec prudence sur cet appareil";
+        } else {
+            reco = "devrait passer sur cet appareil";
+        }
+        return String.format(java.util.Locale.US,
+                "⚠ fp32 charge ~2,5 Go en mémoire (int8 ~0,65 Go). Appareil : %.1f Go de RAM — %s.",
+                totalGb, reco);
     }
 
     /** Activate a downloaded quantization: write the pref + request a full engine reload. */
