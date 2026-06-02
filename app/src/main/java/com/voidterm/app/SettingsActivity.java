@@ -95,12 +95,8 @@ public class SettingsActivity extends Activity {
     // Whisper catalog view (model section)
     private WhisperCatalogView whisperCatalogView;
 
-    // Parakeet download UI (model section) — updated by the download broadcast receiver
-    private Button parakeetDownloadBtn;
-    private Button parakeetCancelBtn;
-    private Button parakeetDeleteBtn;
-    private TextView parakeetProgressText;
-    private TextView parakeetStatusView;
+    // Parakeet quantization selector (model section) — updated by the download broadcast receiver
+    private ParakeetQuantizationView parakeetQuantizationView;
     private BroadcastReceiver downloadReceiver;
 
     // Guard against spinner listeners firing during programmatic setSelection()
@@ -185,12 +181,15 @@ public class SettingsActivity extends Activity {
                 ContextCompat.RECEIVER_NOT_EXPORTED);
         // Re-sync in case the download state changed while paused.
         if (ModelDownloadService.isRunning()) {
-            applyDownloadUiState(true);
             String last = ModelDownloadService.lastProgressText();
-            if (last != null && parakeetProgressText != null) parakeetProgressText.setText(last);
             String jobId = ModelDownloadService.runningJobId();
-            if (jobId != null && com.voidterm.voice.WhisperModelCatalog.byFileName(jobId) != null && whisperCatalogView != null) {
-                whisperCatalogView.onProgress(jobId, last != null ? last : "Downloading…");
+            if (jobId != null) {
+                if (com.voidterm.voice.WhisperModelCatalog.byFileName(jobId) != null && whisperCatalogView != null) {
+                    whisperCatalogView.onProgress(jobId, last != null ? last : "Downloading…");
+                } else if (com.voidterm.voice.ParakeetQuantization.byId(jobId) != null
+                        && parakeetQuantizationView != null) {
+                    parakeetQuantizationView.onProgress(jobId, last != null ? last : "Downloading…");
+                }
             }
         }
     }
@@ -351,59 +350,39 @@ public class SettingsActivity extends Activity {
         whisperControls.setVisibility(isWhisper ? View.VISIBLE : View.GONE);
         body.addView(whisperControls);
 
-        // --- Parakeet-specific controls ---
+        // --- Parakeet quantization selector (int8 / fp32) ---
         LinearLayout parakeetControls = new LinearLayout(this);
         parakeetControls.setOrientation(LinearLayout.VERTICAL);
 
-        boolean modelsReady = com.voidterm.voice.ParakeetModelManager.isModelComplete(this);
+        parakeetControls.addView(makeLabel("Quantization (modèle 0.6b multilingue v3)"));
 
-        parakeetStatusView = new TextView(this);
-        parakeetStatusView.setTextColor(textColor);
-        parakeetStatusView.setTextSize(14);
-        parakeetStatusView.setPadding(0, 0, 0, dp(8));
-        updateParakeetStatus(parakeetStatusView, modelsReady);
-        parakeetControls.addView(parakeetStatusView);
+        String activeQuant = prefs.getString(SettingsDialog.KEY_PARAKEET_QUANTIZATION,
+                SettingsDialog.PARAKEET_QUANT_DEFAULT);
+        parakeetQuantizationView = new ParakeetQuantizationView(this,
+                new ParakeetQuantizationView.Listener() {
+            @Override public void onDownload(com.voidterm.voice.ParakeetQuantization q) {
+                if (ModelDownloadService.isRunning()) return; // one download at a time
+                startForegroundService(new Intent(SettingsActivity.this, ModelDownloadService.class)
+                        .setAction(ModelDownloadService.ACTION_START_DOWNLOAD)
+                        .putExtra(DownloadJobs.EXTRA_JOB_TYPE, ParakeetDownloadJob.JOB_TYPE)
+                        .putExtra(ModelDownloadService.EXTRA_MODEL_ID, q.id));
+                parakeetQuantizationView.onProgress(q.id, "Starting…");
+            }
+            @Override public void onActivate(com.voidterm.voice.ParakeetQuantization q) {
+                activateParakeetQuant(q.id);
+            }
+            @Override public void onDelete(com.voidterm.voice.ParakeetQuantization q) {
+                confirmDeleteParakeetQuant(q);
+            }
+        }, activeQuant, textColor, mutedColor);
+        parakeetControls.addView(parakeetQuantizationView);
 
-        parakeetDownloadBtn = makeActionButton(modelsReady ? "Re-download Models" : "Download Models (~534 MB)");
-        parakeetProgressText = new TextView(this);
-        parakeetProgressText.setTextColor(mutedColor);
-        parakeetProgressText.setTextSize(12);
-        parakeetProgressText.setVisibility(View.GONE);
-        parakeetControls.addView(parakeetProgressText);
-
-        // Download runs in ModelDownloadService (foreground) so it survives leaving
-        // this screen. We just start it and observe progress via broadcast.
-        parakeetDownloadBtn.setOnClickListener(v -> {
-            if (ModelDownloadService.isRunning()) return;
-            startForegroundService(new Intent(this, ModelDownloadService.class)
-                    .setAction(ModelDownloadService.ACTION_START_DOWNLOAD)
-                    .putExtra(DownloadJobs.EXTRA_JOB_TYPE, ParakeetDownloadJob.JOB_TYPE)
-                    .putExtra(ModelDownloadService.EXTRA_MODEL_ID, SettingsDialog.PARAKEET_QUANT_DEFAULT));
-            applyDownloadUiState(true);
-        });
-        parakeetControls.addView(parakeetDownloadBtn);
-
-        parakeetCancelBtn = makeActionButton("Cancel Download");
-        parakeetCancelBtn.setVisibility(View.GONE);
-        parakeetCancelBtn.setOnClickListener(v -> {
-            startService(new Intent(this, ModelDownloadService.class)
-                    .setAction(ModelDownloadService.ACTION_CANCEL_DOWNLOAD));
-            parakeetCancelBtn.setEnabled(false);
-        });
-        parakeetControls.addView(parakeetCancelBtn);
-
-        // Delete button — only meaningful when models exist; hidden while downloading.
-        parakeetDeleteBtn = makeActionButton("🗑 Delete Models");
-        parakeetDeleteBtn.setVisibility(modelsReady ? View.VISIBLE : View.GONE);
-        parakeetDeleteBtn.setOnClickListener(v -> confirmDeleteModels());
-        parakeetControls.addView(parakeetDeleteBtn);
-
-        // Seed UI from a download already running in the background.
-        if (ModelDownloadService.isRunning()) {
-            applyDownloadUiState(true);
-            String last = ModelDownloadService.lastProgressText();
-            if (last != null) parakeetProgressText.setText(last);
-        }
+        TextView fp32Warning = new TextView(this);
+        fp32Warning.setText("⚠ fp32 : très lourd, peut ramer / saturer la mémoire sur Quest 2 (6 Go).");
+        fp32Warning.setTextSize(12);
+        fp32Warning.setTextColor(0xFFFF9800);
+        fp32Warning.setPadding(0, dp(8), 0, dp(8));
+        parakeetControls.addView(fp32Warning);
 
         parakeetControls.setVisibility(isWhisper ? View.GONE : View.VISIBLE);
         body.addView(parakeetControls);
@@ -427,54 +406,40 @@ public class SettingsActivity extends Activity {
         return body;
     }
 
-    private void updateParakeetStatus(TextView statusView, boolean modelsReady) {
-        if (modelsReady) {
-            long sizeMB = ParakeetModelManager.getDownloadedSize(this) / 1048576;
-            statusView.setText("Parakeet TDT v3 — Models ready (" + sizeMB + " MB)");
-        } else {
-            statusView.setText("Parakeet TDT v3 — Models not downloaded");
-        }
+    /** Activate a downloaded quantization: write the pref + request a full engine reload. */
+    private void activateParakeetQuant(String quantId) {
+        prefs.edit()
+                .putString(SettingsDialog.KEY_PARAKEET_QUANTIZATION, quantId)
+                .putBoolean(SettingsDialog.KEY_MODEL_RELOAD_REQUESTED, true)
+                .apply();
+        if (parakeetQuantizationView != null) parakeetQuantizationView.setActive(quantId);
     }
 
-    /** Toggle the download/cancel buttons between idle and in-progress states. */
-    private void applyDownloadUiState(boolean downloading) {
-        if (parakeetDownloadBtn == null) return;
-        parakeetDownloadBtn.setEnabled(!downloading);
-        parakeetDownloadBtn.setText(downloading
-                ? "Downloading..."
-                : (ParakeetModelManager.isModelComplete(this)
-                        ? "Re-download Models" : "Download Models (~534 MB)"));
-        if (downloading && parakeetProgressText != null) {
-            parakeetProgressText.setVisibility(View.VISIBLE);
-        }
-        if (parakeetCancelBtn != null) {
-            parakeetCancelBtn.setVisibility(downloading ? View.VISIBLE : View.GONE);
-            parakeetCancelBtn.setEnabled(true);
-        }
-        if (parakeetDeleteBtn != null) {
-            // Hidden during a download (it would delete files being written), and
-            // only shown when there is something to delete.
-            parakeetDeleteBtn.setVisibility(
-                    !downloading && ParakeetModelManager.isModelComplete(this)
-                            ? View.VISIBLE : View.GONE);
-        }
-    }
-
-    /** Confirm, then delete all Parakeet model files and reset the UI to "not downloaded". */
-    private void confirmDeleteModels() {
+    private void confirmDeleteParakeetQuant(com.voidterm.voice.ParakeetQuantization q) {
         new AlertDialog.Builder(this)
-                .setTitle("Delete Parakeet models?")
-                .setMessage("This removes the ~534 MB of model files. You will need to "
-                        + "download them again to use Parakeet.")
+                .setTitle("Delete Parakeet " + q.displayName + "?")
+                .setMessage("Removes the " + q.displayName + " files (" + q.sizeMb + " MB).")
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Delete", (d, w) -> {
-                    ParakeetModelManager.deleteModels(this);
-                    if (parakeetStatusView != null) updateParakeetStatus(parakeetStatusView, false);
-                    if (parakeetProgressText != null) {
-                        parakeetProgressText.setText("Models deleted");
-                        parakeetProgressText.setVisibility(View.VISIBLE);
+                    String active = prefs.getString(SettingsDialog.KEY_PARAKEET_QUANTIZATION,
+                            SettingsDialog.PARAKEET_QUANT_DEFAULT);
+                    com.voidterm.voice.ParakeetModelManager.deleteModels(this, q);
+                    if (q.id.equals(active)) {
+                        // Active deleted: fall back to the other downloaded quantization, else int8.
+                        String next = SettingsDialog.PARAKEET_QUANT_DEFAULT;
+                        for (com.voidterm.voice.ParakeetQuantization other
+                                : com.voidterm.voice.ParakeetQuantization.ALL) {
+                            if (!other.id.equals(q.id)
+                                    && com.voidterm.voice.ParakeetModelManager.isModelComplete(this, other)) {
+                                next = other.id;
+                                break;
+                            }
+                        }
+                        prefs.edit().putString(SettingsDialog.KEY_PARAKEET_QUANTIZATION, next).apply();
+                        if (parakeetQuantizationView != null) parakeetQuantizationView.setActive(next);
+                    } else if (parakeetQuantizationView != null) {
+                        parakeetQuantizationView.setActive(active);
                     }
-                    applyDownloadUiState(false); // refresh button labels + hide delete
                 })
                 .show();
     }
@@ -500,19 +465,14 @@ public class SettingsActivity extends Activity {
             return;
         }
 
-        // Parakeet path (unchanged)
+        // Parakeet path (quantization id "int8"/"fp32")
+        if (parakeetQuantizationView == null) return;
         if (ModelDownloadService.BROADCAST_PROGRESS.equals(action)) {
-            applyDownloadUiState(true);
-            if (parakeetProgressText != null && text != null) parakeetProgressText.setText(text);
+            parakeetQuantizationView.onProgress(modelId, text != null ? text : "");
         } else if (ModelDownloadService.BROADCAST_COMPLETE.equals(action)) {
-            applyDownloadUiState(false);
-            if (parakeetProgressText != null) parakeetProgressText.setText("All models downloaded");
-            if (parakeetStatusView != null) updateParakeetStatus(parakeetStatusView, true);
+            parakeetQuantizationView.onDownloadEnded(modelId); // quantization becomes active
         } else if (ModelDownloadService.BROADCAST_ERROR.equals(action)) {
-            applyDownloadUiState(false);
-            if (parakeetProgressText != null && text != null) {
-                parakeetProgressText.setText("Error: " + text);
-            }
+            parakeetQuantizationView.onDownloadEnded(null);
         }
     }
 

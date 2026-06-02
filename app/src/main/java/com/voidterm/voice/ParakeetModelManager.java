@@ -78,10 +78,4 @@ public class ParakeetModelManager {
         }
     }
 
-    // --- TEMPORARY no-arg back-compat wrappers (default INT8), removed in Task 7 once
-    //     ParakeetEngine, ParakeetDownloadJob and SettingsActivity are all migrated. ---
-    public static boolean isModelComplete(Context c) { return isModelComplete(c, ParakeetQuantization.INT8); }
-    public static List<FileSpec> fileSpecs(Context c) { return fileSpecs(c, ParakeetQuantization.INT8); }
-    public static long getDownloadedSize(Context c) { return getDownloadedSize(c, ParakeetQuantization.INT8); }
-    public static void deleteModels(Context c) { deleteModels(c, ParakeetQuantization.INT8); }
 }
