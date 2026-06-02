@@ -6,8 +6,15 @@
 ## Objectif
 
 Permettre de choisir la **quantisation** du modèle Parakeet TDT 0.6b v3 (multilingue) :
-- **int8** (~534 Mo) — la quantisation actuelle, rapide, viable sur Quest.
+- **int8** (~670 Mo) — la quantisation actuelle, rapide, viable sur Quest.
 - **fp32** (pleine précision, ~2,5 Go) — légèrement plus précise, nettement plus lourde/lente.
+
+Tailles réelles (vérifiées HF, 2026-06-02) : int8 = `encoder-model.int8.onnx` 652 Mo +
+`decoder_joint-model.int8.onnx` 18 Mo + communs ≈ **670 Mo**. fp32 = `encoder-model.onnx`
+42 Mo + `encoder-model.onnx.data` 2,44 Go + `decoder_joint-model.onnx` 72 Mo + communs
+≈ **2,55 Go**. (L'int8 stocke ses poids *inline* — d'où le gros `.onnx` ; le fp32 les met
+dans le `.data` — d'où le petit `.onnx`. La string « 534 MB » du code Parakeet existant est
+**fausse** et doit être corrigée.)
 
 Parakeet v3 est un **modèle unique** (0.6b) : il n'existe pas de tailles tiny/base/large
 comme Whisper. La seule variante réelle est le niveau de quantisation. On réutilise
@@ -40,8 +47,8 @@ La quantisation Parakeet devient l'analogue du « modèle » Whisper.
 | Module | Package | Type | Rôle |
 |---|---|---|---|
 | `ParakeetQuantization` | `com.voidterm.voice` | data | Catalogue de 2 entrées (analogue de `WhisperModelCatalog`). Champs : `id`, `displayName`, `sizeMb`, `encoderFile`, `decoderFile`, `extraFiles` (le `.data` pour fp32). Constantes des fichiers communs (`nemo128.onnx`, `vocab.txt`) + `BASE_URL`. `byId(String)`, `ALL`. |
-| `ParakeetModelManager` | `com.voidterm.voice` | logique | Refactor : méthodes paramétrées par quantisation — `isModelComplete(ctx, q)`, `fileSpecs(ctx, q)`, `getDownloadedSize(ctx, q)`, `deleteModels(ctx, q)`. `getModelDir` inchangé. |
-| `ParakeetDownloadJob` | `com.voidterm.app` | policy | Refactor : paramétré par `ParakeetQuantization`. `EXTRA_JOB_TYPE` reste `"parakeet"` (branche factory) ; `id()` renvoie la quantisation id (`"int8"`/`"fp32"`). `onComplete` écrit `KEY_PARAKEET_QUANTIZATION` + `KEY_MODEL_RELOAD_REQUESTED`. |
+| `ParakeetModelManager` | `com.voidterm.voice` | logique | Refactor : méthodes paramétrées par quantisation — `isModelComplete(ctx, q)`, `fileSpecs(ctx, q)`, `getDownloadedSize(ctx, q)`, `deleteModels(ctx, q)`. `deleteModels(ctx, q)` supprime **uniquement** les fichiers spécifiques à `q` (encoder/decoder/extra) ; les fichiers communs `nemo128`/`vocab` (~230 ko) sont **toujours conservés** (orphelins inoffensifs — évite un edge-case conditionnel, cf. YAGNI). `getModelDir` inchangé. |
+| `ParakeetDownloadJob` | `com.voidterm.app` | policy | Refactor : paramétré par `ParakeetQuantization`. La constante de type de job est renommée `ID` → **`JOB_TYPE`** (= `"parakeet"`, branche factory) pour éviter la confusion avec `id()` qui renvoie désormais la quantisation (`"int8"`/`"fp32"`). `onComplete` écrit `KEY_PARAKEET_QUANTIZATION` + `KEY_MODEL_RELOAD_REQUESTED` (reload moteur complet — **pas** une clé de `ParakeetConfig.CONFIG_KEYS`, qui n'invaliderait que le cache config sans recharger les sessions ONNX). |
 | `DownloadJobs` | `com.voidterm.app` | factory | La branche `"parakeet"` lit `EXTRA_MODEL_ID` = quantisation id → `ParakeetDownloadJob(ctx, ParakeetQuantization.byId(id))` (null si inconnue). |
 | `ParakeetEngine` | `com.voidterm.voice` | moteur | `loadModel` lit `KEY_PARAKEET_QUANTIZATION` (défaut `int8`) et charge `encoderFile`/`decoderFile` de cette quantisation au lieu des `*.int8.onnx` en dur. `nemo128`/`vocab` inchangés. Le `.data` fp32 est résolu automatiquement par ONNX Runtime (même dossier). `isModelLoaded`/erreur "not downloaded" via le manager pour la quantisation active. |
 | `ParakeetQuantizationView` | `com.voidterm.app` | UI | Vue dédiée : 2 lignes plates (int8 / fp32), `Listener{onDownload,onActivate,onDelete}` + `onProgress`/`onDownloadEnded`/`setActive`. Remplace le bloc Parakeet actuel dans `SettingsActivity.buildModelSection`. |
@@ -51,8 +58,11 @@ La quantisation Parakeet devient l'analogue du « modèle » Whisper.
 
 | id | displayName | encoderFile | decoderFile | extraFiles | sizeMb |
 |---|---|---|---|---|---|
-| `int8` | "int8 (recommandé)" | `encoder-model.int8.onnx` | `decoder_joint-model.int8.onnx` | — | 534 |
-| `fp32` | "fp32 (lourd, ~2,5 Go)" | `encoder-model.onnx` | `decoder_joint-model.onnx` | `encoder-model.onnx.data` | 2500 |
+| `int8` | "int8 (recommandé)" | `encoder-model.int8.onnx` | `decoder_joint-model.int8.onnx` | — | 670 |
+| `fp32` | "fp32 (lourd, ~2,5 Go)" | `encoder-model.onnx` | `decoder_joint-model.onnx` | `encoder-model.onnx.data` | 2555 |
+
+`extraFiles` ne contient que le `.data` de l'**encodeur** : `decoder_joint-model.onnx`
+(72 Mo) est self-contained (pas de `.data`).
 
 Fichiers communs (toujours requis, partagés) : `nemo128.onnx`, `vocab.txt`.
 `fileSpecs(ctx, q)` = communs + `encoderFile` + `decoderFile` + `extraFiles`.
@@ -73,7 +83,7 @@ Donc int8 = 4 fichiers, fp32 = 5 fichiers. `BASE_URL` =
 ```
 ┌─ Voice Engine : Parakeet ───────────────────┐
 │ Quantization (modèle 0.6b multilingue v3)    │
-│  int8 (recommandé)   534 MB    ✓ Actif    🗑  │
+│  int8 (recommandé)   670 MB    ✓ Actif    🗑  │
 │  fp32 (lourd)        2.5 GB    [ Download ]   │
 │  ⚠ fp32 : très lourd, peut ramer/OOM sur     │
 │     Quest 2 (6 Go RAM)                        │
@@ -110,10 +120,11 @@ reload → `setActive`.
 ### Suppression
 
 🗑 → dialog → `ParakeetModelManager.deleteModels(ctx, q)` : supprime `encoderFile` +
-`decoderFile` + `extraFiles` de `q`. Les communs (`nemo128`/`vocab`) ne sont supprimés que si
-**aucune** autre quantisation n'est présente (sinon supprimer int8 casserait fp32).
-Si on supprime la quantisation **active** → fallback : activer l'autre quantisation si
-téléchargée, sinon revenir au défaut `int8` (qui sera « absent » jusqu'à re-download).
+`decoderFile` + `extraFiles` de `q`. Les communs (`nemo128`/`vocab`, ~230 ko) sont **toujours
+conservés** — pas de logique conditionnelle (supprimer int8 ne touche jamais aux fichiers que
+fp32 partage). Si on supprime la quantisation **active** → fallback : activer l'autre
+quantisation si téléchargée, sinon revenir au défaut `int8` (qui sera « absent » jusqu'à
+re-download).
 
 ### Concurrence
 
@@ -147,8 +158,11 @@ comme `EXTRA_JOB_TYPE` (seul `job.id()` passe de `"parakeet"` à la quantisation
   cohérentes (`BASE_URL` + fileName).
 - `ParakeetModelManagerTest` (Robolectric, temp dir) : `isModelComplete(q)` (true seulement
   si tous les fichiers de `q` présents non-vides) ; `fileSpecs(q)` (4 int8 / 5 fp32) ;
-  `deleteModels(INT8)` **préserve `nemo128`/`vocab` quand fp32 présent**, et les supprime quand
-  aucune autre quantisation ne reste ; `getDownloadedSize(q)`.
+  `deleteModels(INT8)` supprime les fichiers spécifiques int8 mais **conserve toujours
+  `nemo128`/`vocab`** et ne touche pas aux fichiers fp32 présents ; `getDownloadedSize(q)`.
 - `DownloadJobsTest` : `parakeet`+`int8` → job `id()=="int8"` ; `parakeet`+`fp32` →
   `"fp32"` ; `parakeet`+quantisation inconnue → null.
-- Re-test manuel Quest (escaladé) : download fp32 réel, chargement, comportement OOM/latence.
+- Re-test manuel Quest (escaladé) : (a) download fp32 réel ; (b) **fp32 charge sans erreur
+  d'external-data** — ORT doit résoudre `encoder-model.onnx.data` relatif au `.onnx` via
+  `getAbsolutePath()` ; vérifier l'absence de `FileNotFound`/erreur onnxruntime external-data ;
+  (c) comportement OOM/latence sur le device ; (d) non-régression int8 (toujours actif par défaut).
