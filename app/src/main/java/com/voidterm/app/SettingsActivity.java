@@ -188,6 +188,10 @@ public class SettingsActivity extends Activity {
             applyDownloadUiState(true);
             String last = ModelDownloadService.lastProgressText();
             if (last != null && parakeetProgressText != null) parakeetProgressText.setText(last);
+            String jobId = ModelDownloadService.runningJobId();
+            if (jobId != null && com.voidterm.voice.WhisperModelCatalog.byFileName(jobId) != null && whisperCatalogView != null) {
+                whisperCatalogView.onProgress(jobId, last != null ? last : "Downloading…");
+            }
         }
     }
 
@@ -331,7 +335,7 @@ public class SettingsActivity extends Activity {
                 startForegroundService(new Intent(SettingsActivity.this, ModelDownloadService.class)
                         .setAction(ModelDownloadService.ACTION_START_DOWNLOAD)
                         .putExtra(DownloadJobs.EXTRA_JOB_TYPE, DownloadJobs.JOB_WHISPER)
-                        .putExtra(DownloadJobs.EXTRA_MODEL_ID, m.id));
+                        .putExtra(ModelDownloadService.EXTRA_MODEL_ID, m.id));
                 whisperCatalogView.onProgress(m.fileName, "Starting…");
             }
             @Override public void onActivate(com.voidterm.voice.WhisperModelCatalog.WhisperModel m) {
@@ -370,6 +374,7 @@ public class SettingsActivity extends Activity {
         // Download runs in ModelDownloadService (foreground) so it survives leaving
         // this screen. We just start it and observe progress via broadcast.
         parakeetDownloadBtn.setOnClickListener(v -> {
+            if (ModelDownloadService.isRunning()) return;
             startForegroundService(new Intent(this, ModelDownloadService.class)
                     .setAction(ModelDownloadService.ACTION_START_DOWNLOAD)
                     .putExtra(DownloadJobs.EXTRA_JOB_TYPE, ParakeetDownloadJob.ID));
@@ -553,14 +558,7 @@ public class SettingsActivity extends Activity {
                 .putBoolean(SettingsDialog.KEY_MODEL_RELOAD_REQUESTED, true)
                 .apply();
 
-        // Update the label in the model section
-        if (sectionBodies[SECTION_MODEL] != null
-                && sectionBodies[SECTION_MODEL].getChildCount() > 0) {
-            View first = sectionBodies[SECTION_MODEL].getChildAt(0);
-            if (first instanceof TextView) {
-                ((TextView) first).setText("Current: " + filename);
-            }
-        }
+        if (whisperCatalogView != null) whisperCatalogView.setActive(filename);
     }
 
     /** Activate a downloaded whisper model: set it active AND switch the engine to whisper. */

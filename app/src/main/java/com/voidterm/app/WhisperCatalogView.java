@@ -33,6 +33,7 @@ public class WhisperCatalogView extends LinearLayout {
     private final int mutedColor;
     // Per-model row action button, keyed by fileName, for targeted progress refresh.
     private final Map<String, Button> actionButtons = new HashMap<>();
+    private final Map<String, Button> deleteButtons = new HashMap<>();
     private final Map<String, TextView> stateLabels = new HashMap<>();
     private String activeFileName;
     private boolean downloadInProgress;
@@ -110,6 +111,7 @@ public class WhisperCatalogView extends LinearLayout {
         delete.setAllCaps(false);
         delete.setText("🗑");
         delete.setOnClickListener(v -> listener.onDelete(m));
+        deleteButtons.put(m.fileName, delete);
         row.addView(delete);
 
         bindRow(m, action, delete);
@@ -176,9 +178,8 @@ public class WhisperCatalogView extends LinearLayout {
         for (WhisperModelCatalog.WhisperModel m : WhisperModelCatalog.ALL) {
             Button action = actionButtons.get(m.fileName);
             if (action == null) continue;
-            // delete button is the next sibling in the row
-            LinearLayout row = (LinearLayout) action.getParent();
-            Button delete = (Button) row.getChildAt(row.getChildCount() - 1);
+            Button delete = deleteButtons.get(m.fileName);
+            if (delete == null) continue;
             bindRow(m, action, delete);
         }
     }
