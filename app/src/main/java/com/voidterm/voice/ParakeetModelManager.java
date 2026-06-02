@@ -3,8 +3,12 @@ package com.voidterm.voice;
 import android.content.Context;
 import android.util.Log;
 
+import com.voidterm.contracts.FileSpec;
+
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -60,6 +64,16 @@ public class ParakeetModelManager {
     /** Get the parakeet models directory path. */
     public static File getModelDir(Context context) {
         return new File(new File(context.getFilesDir(), MODELS_DIR), PARAKEET_DIR);
+    }
+
+    /** The files to download for Parakeet, as boundary DTOs. */
+    public static List<FileSpec> fileSpecs(Context context) {
+        File modelDir = getModelDir(context);
+        List<FileSpec> specs = new ArrayList<>();
+        for (int i = 0; i < REQUIRED_FILES.length; i++) {
+            specs.add(new FileSpec(DOWNLOAD_URLS[i], new File(modelDir, REQUIRED_FILES[i]), REQUIRED_FILES[i]));
+        }
+        return specs;
     }
 
     /** Get total size of downloaded model files in bytes. */
