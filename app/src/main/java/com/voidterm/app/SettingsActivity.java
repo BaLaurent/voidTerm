@@ -169,9 +169,9 @@ public class SettingsActivity extends Activity {
         super.onResume();
         // Observe the background download while this screen is visible.
         IntentFilter filter = new IntentFilter();
-        filter.addAction(ParakeetDownloadService.BROADCAST_PROGRESS);
-        filter.addAction(ParakeetDownloadService.BROADCAST_COMPLETE);
-        filter.addAction(ParakeetDownloadService.BROADCAST_ERROR);
+        filter.addAction(ModelDownloadService.BROADCAST_PROGRESS);
+        filter.addAction(ModelDownloadService.BROADCAST_COMPLETE);
+        filter.addAction(ModelDownloadService.BROADCAST_ERROR);
         downloadReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
@@ -181,9 +181,9 @@ public class SettingsActivity extends Activity {
         ContextCompat.registerReceiver(this, downloadReceiver, filter,
                 ContextCompat.RECEIVER_NOT_EXPORTED);
         // Re-sync in case the download state changed while paused.
-        if (ParakeetDownloadService.isRunning()) {
+        if (ModelDownloadService.isRunning()) {
             applyDownloadUiState(true);
-            String last = ParakeetDownloadService.lastProgressText();
+            String last = ModelDownloadService.lastProgressText();
             if (last != null && parakeetProgressText != null) parakeetProgressText.setText(last);
         }
     }
@@ -345,11 +345,12 @@ public class SettingsActivity extends Activity {
         parakeetProgressText.setVisibility(View.GONE);
         parakeetControls.addView(parakeetProgressText);
 
-        // Download runs in ParakeetDownloadService (foreground) so it survives leaving
+        // Download runs in ModelDownloadService (foreground) so it survives leaving
         // this screen. We just start it and observe progress via broadcast.
         parakeetDownloadBtn.setOnClickListener(v -> {
-            startForegroundService(new Intent(this, ParakeetDownloadService.class)
-                    .setAction(ParakeetDownloadService.ACTION_START_DOWNLOAD));
+            startForegroundService(new Intent(this, ModelDownloadService.class)
+                    .setAction(ModelDownloadService.ACTION_START_DOWNLOAD)
+                    .putExtra(DownloadJobs.EXTRA_JOB_TYPE, ParakeetDownloadJob.ID));
             applyDownloadUiState(true);
         });
         parakeetControls.addView(parakeetDownloadBtn);
@@ -357,8 +358,8 @@ public class SettingsActivity extends Activity {
         parakeetCancelBtn = makeActionButton("Cancel Download");
         parakeetCancelBtn.setVisibility(View.GONE);
         parakeetCancelBtn.setOnClickListener(v -> {
-            startService(new Intent(this, ParakeetDownloadService.class)
-                    .setAction(ParakeetDownloadService.ACTION_CANCEL_DOWNLOAD));
+            startService(new Intent(this, ModelDownloadService.class)
+                    .setAction(ModelDownloadService.ACTION_CANCEL_DOWNLOAD));
             parakeetCancelBtn.setEnabled(false);
         });
         parakeetControls.addView(parakeetCancelBtn);
@@ -370,9 +371,9 @@ public class SettingsActivity extends Activity {
         parakeetControls.addView(parakeetDeleteBtn);
 
         // Seed UI from a download already running in the background.
-        if (ParakeetDownloadService.isRunning()) {
+        if (ModelDownloadService.isRunning()) {
             applyDownloadUiState(true);
-            String last = ParakeetDownloadService.lastProgressText();
+            String last = ModelDownloadService.lastProgressText();
             if (last != null) parakeetProgressText.setText(last);
         }
 
@@ -450,18 +451,18 @@ public class SettingsActivity extends Activity {
                 .show();
     }
 
-    /** Handle a progress/complete/error broadcast from {@link ParakeetDownloadService}. */
+    /** Handle a progress/complete/error broadcast from {@link ModelDownloadService}. */
     private void onDownloadBroadcast(Intent intent) {
         String action = intent.getAction();
-        String text = intent.getStringExtra(ParakeetDownloadService.EXTRA_TEXT);
-        if (ParakeetDownloadService.BROADCAST_PROGRESS.equals(action)) {
+        String text = intent.getStringExtra(ModelDownloadService.EXTRA_TEXT);
+        if (ModelDownloadService.BROADCAST_PROGRESS.equals(action)) {
             applyDownloadUiState(true);
             if (parakeetProgressText != null && text != null) parakeetProgressText.setText(text);
-        } else if (ParakeetDownloadService.BROADCAST_COMPLETE.equals(action)) {
+        } else if (ModelDownloadService.BROADCAST_COMPLETE.equals(action)) {
             applyDownloadUiState(false);
             if (parakeetProgressText != null) parakeetProgressText.setText("All models downloaded");
             if (parakeetStatusView != null) updateParakeetStatus(parakeetStatusView, true);
-        } else if (ParakeetDownloadService.BROADCAST_ERROR.equals(action)) {
+        } else if (ModelDownloadService.BROADCAST_ERROR.equals(action)) {
             applyDownloadUiState(false);
             if (parakeetProgressText != null && text != null) {
                 parakeetProgressText.setText("Error: " + text);
