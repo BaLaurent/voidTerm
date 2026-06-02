@@ -103,6 +103,10 @@ public final class SettingsDialog {
     public static final String ENGINE_PARAKEET = "parakeet";
     public static final String[] ENGINE_LABELS = {"Whisper (whisper.cpp)", "Parakeet TDT v3 (ONNX)"};
     public static final String[] ENGINE_VALUES = {ENGINE_WHISPER, ENGINE_PARAKEET};
+    // Single source of truth for the default engine. Parakeet is preferred — better
+    // accuracy than whisper.cpp on Quest, and neither engine ships a bundled model
+    // (assets/models/ is empty), so both require the user to provide one regardless.
+    public static final String ENGINE_DEFAULT = ENGINE_PARAKEET;
 
     // Parakeet (ONNX) engine tunables. Defaults live in ParakeetConfig.DEFAULT.
     public static final String KEY_PARAKEET_THREAD_OVERRIDE = "parakeet_thread_override";

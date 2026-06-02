@@ -293,7 +293,7 @@ public class SettingsActivity extends Activity {
         // Engine selector
         body.addView(makeLabel("Engine"));
         String currentEngine = prefs.getString(SettingsDialog.KEY_TRANSCRIPTION_ENGINE,
-                SettingsDialog.ENGINE_WHISPER);
+                SettingsDialog.ENGINE_DEFAULT);
         Spinner engineSpinner = makeSpinner(SettingsDialog.ENGINE_LABELS);
         int engineIndex = findIndex(SettingsDialog.ENGINE_VALUES, currentEngine);
         engineSpinner.setSelection(engineIndex);
@@ -537,7 +537,7 @@ public class SettingsActivity extends Activity {
     private LinearLayout buildTranscriptionSection() {
         LinearLayout body = makeSectionBody();
         boolean isWhisper = SettingsDialog.ENGINE_WHISPER.equals(
-                prefs.getString(SettingsDialog.KEY_TRANSCRIPTION_ENGINE, SettingsDialog.ENGINE_WHISPER));
+                prefs.getString(SettingsDialog.KEY_TRANSCRIPTION_ENGINE, SettingsDialog.ENGINE_DEFAULT));
 
         // --- Whisper-only controls container ---
         whisperTranscriptionControls = new LinearLayout(this);
