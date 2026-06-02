@@ -406,7 +406,7 @@ public class VoiceInputManager implements TranscriptionListener {
     }
 
     private TranscriptionEngine createEngine(SharedPreferences prefs) {
-        String type = prefs.getString(SettingsDialog.KEY_TRANSCRIPTION_ENGINE, SettingsDialog.ENGINE_WHISPER);
+        String type = prefs.getString(SettingsDialog.KEY_TRANSCRIPTION_ENGINE, SettingsDialog.ENGINE_DEFAULT);
         if (SettingsDialog.ENGINE_PARAKEET.equals(type)) {
             return new ParakeetEngine(prefs);
         }

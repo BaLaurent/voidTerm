@@ -1,6 +1,7 @@
 package com.voidterm.app;
 
 import android.app.Activity;
+import android.app.ActivityManager;
 import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -33,6 +34,7 @@ import androidx.core.content.ContextCompat;
 
 import com.voidterm.voice.DeviceProfiler;
 import com.voidterm.voice.ParakeetModelManager;
+import com.voidterm.voice.ParakeetQuantization;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -92,12 +94,11 @@ public class SettingsActivity extends Activity {
     // Whisper-only transcription controls (hidden when Parakeet selected)
     private LinearLayout whisperTranscriptionControls;
 
-    // Parakeet download UI (model section) — updated by the download broadcast receiver
-    private Button parakeetDownloadBtn;
-    private Button parakeetCancelBtn;
-    private Button parakeetDeleteBtn;
-    private TextView parakeetProgressText;
-    private TextView parakeetStatusView;
+    // Whisper catalog view (model section)
+    private WhisperCatalogView whisperCatalogView;
+
+    // Parakeet quantization selector (model section) — updated by the download broadcast receiver
+    private ParakeetQuantizationView parakeetQuantizationView;
     private BroadcastReceiver downloadReceiver;
 
     // Guard against spinner listeners firing during programmatic setSelection()
@@ -169,9 +170,9 @@ public class SettingsActivity extends Activity {
         super.onResume();
         // Observe the background download while this screen is visible.
         IntentFilter filter = new IntentFilter();
-        filter.addAction(ParakeetDownloadService.BROADCAST_PROGRESS);
-        filter.addAction(ParakeetDownloadService.BROADCAST_COMPLETE);
-        filter.addAction(ParakeetDownloadService.BROADCAST_ERROR);
+        filter.addAction(ModelDownloadService.BROADCAST_PROGRESS);
+        filter.addAction(ModelDownloadService.BROADCAST_COMPLETE);
+        filter.addAction(ModelDownloadService.BROADCAST_ERROR);
         downloadReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
@@ -181,10 +182,17 @@ public class SettingsActivity extends Activity {
         ContextCompat.registerReceiver(this, downloadReceiver, filter,
                 ContextCompat.RECEIVER_NOT_EXPORTED);
         // Re-sync in case the download state changed while paused.
-        if (ParakeetDownloadService.isRunning()) {
-            applyDownloadUiState(true);
-            String last = ParakeetDownloadService.lastProgressText();
-            if (last != null && parakeetProgressText != null) parakeetProgressText.setText(last);
+        if (ModelDownloadService.isRunning()) {
+            String last = ModelDownloadService.lastProgressText();
+            String jobId = ModelDownloadService.runningJobId();
+            if (jobId != null) {
+                if (com.voidterm.voice.WhisperModelCatalog.byFileName(jobId) != null && whisperCatalogView != null) {
+                    whisperCatalogView.onProgress(jobId, last != null ? last : "Downloading…");
+                } else if (ParakeetQuantization.byId(jobId) != null
+                        && parakeetQuantizationView != null) {
+                    parakeetQuantizationView.onProgress(jobId, last != null ? last : "Downloading…");
+                }
+            }
         }
     }
 
@@ -293,7 +301,7 @@ public class SettingsActivity extends Activity {
         // Engine selector
         body.addView(makeLabel("Engine"));
         String currentEngine = prefs.getString(SettingsDialog.KEY_TRANSCRIPTION_ENGINE,
-                SettingsDialog.ENGINE_WHISPER);
+                SettingsDialog.ENGINE_DEFAULT);
         Spinner engineSpinner = makeSpinner(SettingsDialog.ENGINE_LABELS);
         int engineIndex = findIndex(SettingsDialog.ENGINE_VALUES, currentEngine);
         engineSpinner.setSelection(engineIndex);
@@ -321,60 +329,61 @@ public class SettingsActivity extends Activity {
         });
         whisperControls.addView(browseBtn);
 
+        String activeModel = prefs.getString(SettingsDialog.KEY_MODEL_NAME, SettingsDialog.DEFAULT_MODEL);
+        whisperCatalogView = new WhisperCatalogView(this, new WhisperCatalogView.Listener() {
+            @Override public void onDownload(com.voidterm.voice.WhisperModelCatalog.WhisperModel m) {
+                if (ModelDownloadService.isRunning()) return; // one download at a time
+                startForegroundService(new Intent(SettingsActivity.this, ModelDownloadService.class)
+                        .setAction(ModelDownloadService.ACTION_START_DOWNLOAD)
+                        .putExtra(DownloadJobs.EXTRA_JOB_TYPE, DownloadJobs.JOB_WHISPER)
+                        .putExtra(ModelDownloadService.EXTRA_MODEL_ID, m.id));
+                whisperCatalogView.onProgress(m.fileName, "Starting…");
+            }
+            @Override public void onActivate(com.voidterm.voice.WhisperModelCatalog.WhisperModel m) {
+                activateWhisperModel(m.fileName);
+            }
+            @Override public void onDelete(com.voidterm.voice.WhisperModelCatalog.WhisperModel m) {
+                confirmDeleteWhisperModel(m);
+            }
+        }, activeModel, textColor, mutedColor);
+        whisperControls.addView(whisperCatalogView);
+
         boolean isWhisper = SettingsDialog.ENGINE_WHISPER.equals(currentEngine);
         whisperControls.setVisibility(isWhisper ? View.VISIBLE : View.GONE);
         body.addView(whisperControls);
 
-        // --- Parakeet-specific controls ---
+        // --- Parakeet quantization selector (int8 / fp32) ---
         LinearLayout parakeetControls = new LinearLayout(this);
         parakeetControls.setOrientation(LinearLayout.VERTICAL);
 
-        boolean modelsReady = com.voidterm.voice.ParakeetModelManager.isModelComplete(this);
+        parakeetControls.addView(makeLabel("Quantization (modèle 0.6b multilingue v3)"));
 
-        parakeetStatusView = new TextView(this);
-        parakeetStatusView.setTextColor(textColor);
-        parakeetStatusView.setTextSize(14);
-        parakeetStatusView.setPadding(0, 0, 0, dp(8));
-        updateParakeetStatus(parakeetStatusView, modelsReady);
-        parakeetControls.addView(parakeetStatusView);
+        String activeQuant = prefs.getString(SettingsDialog.KEY_PARAKEET_QUANTIZATION,
+                SettingsDialog.PARAKEET_QUANT_DEFAULT);
+        parakeetQuantizationView = new ParakeetQuantizationView(this,
+                new ParakeetQuantizationView.Listener() {
+            @Override public void onDownload(ParakeetQuantization q) {
+                if (ModelDownloadService.isRunning()) return; // one download at a time
+                startForegroundService(new Intent(SettingsActivity.this, ModelDownloadService.class)
+                        .setAction(ModelDownloadService.ACTION_START_DOWNLOAD)
+                        .putExtra(DownloadJobs.EXTRA_JOB_TYPE, ParakeetDownloadJob.JOB_TYPE)
+                        .putExtra(ModelDownloadService.EXTRA_MODEL_ID, q.id));
+                parakeetQuantizationView.onProgress(q.id, "Starting…");
+            }
+            @Override public void onActivate(ParakeetQuantization q) {
+                activateParakeetQuant(q.id);
+            }
+            @Override public void onDelete(ParakeetQuantization q) {
+                confirmDeleteParakeetQuant(q);
+            }
+        }, activeQuant, textColor, mutedColor);
+        parakeetControls.addView(parakeetQuantizationView);
 
-        parakeetDownloadBtn = makeActionButton(modelsReady ? "Re-download Models" : "Download Models (~534 MB)");
-        parakeetProgressText = new TextView(this);
-        parakeetProgressText.setTextColor(mutedColor);
-        parakeetProgressText.setTextSize(12);
-        parakeetProgressText.setVisibility(View.GONE);
-        parakeetControls.addView(parakeetProgressText);
-
-        // Download runs in ParakeetDownloadService (foreground) so it survives leaving
-        // this screen. We just start it and observe progress via broadcast.
-        parakeetDownloadBtn.setOnClickListener(v -> {
-            startForegroundService(new Intent(this, ParakeetDownloadService.class)
-                    .setAction(ParakeetDownloadService.ACTION_START_DOWNLOAD));
-            applyDownloadUiState(true);
-        });
-        parakeetControls.addView(parakeetDownloadBtn);
-
-        parakeetCancelBtn = makeActionButton("Cancel Download");
-        parakeetCancelBtn.setVisibility(View.GONE);
-        parakeetCancelBtn.setOnClickListener(v -> {
-            startService(new Intent(this, ParakeetDownloadService.class)
-                    .setAction(ParakeetDownloadService.ACTION_CANCEL_DOWNLOAD));
-            parakeetCancelBtn.setEnabled(false);
-        });
-        parakeetControls.addView(parakeetCancelBtn);
-
-        // Delete button — only meaningful when models exist; hidden while downloading.
-        parakeetDeleteBtn = makeActionButton("🗑 Delete Models");
-        parakeetDeleteBtn.setVisibility(modelsReady ? View.VISIBLE : View.GONE);
-        parakeetDeleteBtn.setOnClickListener(v -> confirmDeleteModels());
-        parakeetControls.addView(parakeetDeleteBtn);
-
-        // Seed UI from a download already running in the background.
-        if (ParakeetDownloadService.isRunning()) {
-            applyDownloadUiState(true);
-            String last = ParakeetDownloadService.lastProgressText();
-            if (last != null) parakeetProgressText.setText(last);
-        }
+        TextView fp32Warning = new TextView(this);
+        applyFp32Warning(fp32Warning);
+        fp32Warning.setTextSize(12);
+        fp32Warning.setPadding(0, dp(8), 0, dp(8));
+        parakeetControls.addView(fp32Warning);
 
         parakeetControls.setVisibility(isWhisper ? View.GONE : View.VISIBLE);
         body.addView(parakeetControls);
@@ -398,74 +407,105 @@ public class SettingsActivity extends Activity {
         return body;
     }
 
-    private void updateParakeetStatus(TextView statusView, boolean modelsReady) {
-        if (modelsReady) {
-            long sizeMB = ParakeetModelManager.getDownloadedSize(this) / 1048576;
-            statusView.setText("Parakeet TDT v3 — Models ready (" + sizeMB + " MB)");
+    /**
+     * Configure the fp32 memory note from THIS device's total RAM rather than a hardcoded
+     * Quest figure — the recommendation depends on the hardware it runs on. fp32 loads
+     * ~2.5 GB of weights into native memory plus ONNX inference overhead. Green when memory
+     * is ample (>= 8 GB), orange when fp32 may be tight or unsafe.
+     */
+    private void applyFp32Warning(TextView tv) {
+        ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+        ActivityManager.MemoryInfo mi = new ActivityManager.MemoryInfo();
+        am.getMemoryInfo(mi);
+        double totalGb = mi.totalMem / (1024.0 * 1024.0 * 1024.0);
+        String reco;
+        int color;
+        if (totalGb < 4.0) {
+            reco = "not recommended (likely out of memory)";
+            color = 0xFFFF9800; // orange
+        } else if (totalGb < 8.0) {
+            reco = "may be tight — use with caution";
+            color = 0xFFFF9800; // orange
         } else {
-            statusView.setText("Parakeet TDT v3 — Models not downloaded");
+            reco = "sufficient";
+            color = 0xFF4CAF50; // green
         }
+        tv.setText(String.format(java.util.Locale.US,
+                "fp32 uses ~2.5 GB of memory (int8 ~0.65 GB). This device has %.1f GB RAM — %s.",
+                totalGb, reco));
+        tv.setTextColor(color);
     }
 
-    /** Toggle the download/cancel buttons between idle and in-progress states. */
-    private void applyDownloadUiState(boolean downloading) {
-        if (parakeetDownloadBtn == null) return;
-        parakeetDownloadBtn.setEnabled(!downloading);
-        parakeetDownloadBtn.setText(downloading
-                ? "Downloading..."
-                : (ParakeetModelManager.isModelComplete(this)
-                        ? "Re-download Models" : "Download Models (~534 MB)"));
-        if (downloading && parakeetProgressText != null) {
-            parakeetProgressText.setVisibility(View.VISIBLE);
-        }
-        if (parakeetCancelBtn != null) {
-            parakeetCancelBtn.setVisibility(downloading ? View.VISIBLE : View.GONE);
-            parakeetCancelBtn.setEnabled(true);
-        }
-        if (parakeetDeleteBtn != null) {
-            // Hidden during a download (it would delete files being written), and
-            // only shown when there is something to delete.
-            parakeetDeleteBtn.setVisibility(
-                    !downloading && ParakeetModelManager.isModelComplete(this)
-                            ? View.VISIBLE : View.GONE);
-        }
+    /** Activate a downloaded quantization: write the pref + request a full engine reload. */
+    private void activateParakeetQuant(String quantId) {
+        prefs.edit()
+                .putString(SettingsDialog.KEY_PARAKEET_QUANTIZATION, quantId)
+                .putBoolean(SettingsDialog.KEY_MODEL_RELOAD_REQUESTED, true)
+                .apply();
+        if (parakeetQuantizationView != null) parakeetQuantizationView.setActive(quantId);
     }
 
-    /** Confirm, then delete all Parakeet model files and reset the UI to "not downloaded". */
-    private void confirmDeleteModels() {
+    private void confirmDeleteParakeetQuant(ParakeetQuantization q) {
         new AlertDialog.Builder(this)
-                .setTitle("Delete Parakeet models?")
-                .setMessage("This removes the ~534 MB of model files. You will need to "
-                        + "download them again to use Parakeet.")
+                .setTitle("Delete Parakeet " + q.displayName + "?")
+                .setMessage("Removes the " + q.displayName + " files (" + q.sizeMb + " MB).")
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Delete", (d, w) -> {
-                    ParakeetModelManager.deleteModels(this);
-                    if (parakeetStatusView != null) updateParakeetStatus(parakeetStatusView, false);
-                    if (parakeetProgressText != null) {
-                        parakeetProgressText.setText("Models deleted");
-                        parakeetProgressText.setVisibility(View.VISIBLE);
+                    String active = prefs.getString(SettingsDialog.KEY_PARAKEET_QUANTIZATION,
+                            SettingsDialog.PARAKEET_QUANT_DEFAULT);
+                    ParakeetModelManager.deleteModels(this, q);
+                    if (q.id.equals(active)) {
+                        // Active deleted: fall back to the other downloaded quantization, else int8.
+                        String next = SettingsDialog.PARAKEET_QUANT_DEFAULT;
+                        for (ParakeetQuantization other
+                                : ParakeetQuantization.ALL) {
+                            if (!other.id.equals(q.id)
+                                    && ParakeetModelManager.isModelComplete(this, other)) {
+                                next = other.id;
+                                break;
+                            }
+                        }
+                        prefs.edit()
+                                .putString(SettingsDialog.KEY_PARAKEET_QUANTIZATION, next)
+                                .putBoolean(SettingsDialog.KEY_MODEL_RELOAD_REQUESTED, true)
+                                .apply();
+                        if (parakeetQuantizationView != null) parakeetQuantizationView.setActive(next);
+                    } else if (parakeetQuantizationView != null) {
+                        parakeetQuantizationView.setActive(active);
                     }
-                    applyDownloadUiState(false); // refresh button labels + hide delete
                 })
                 .show();
     }
 
-    /** Handle a progress/complete/error broadcast from {@link ParakeetDownloadService}. */
+    /** Handle a progress/complete/error broadcast from {@link ModelDownloadService}. */
     private void onDownloadBroadcast(Intent intent) {
         String action = intent.getAction();
-        String text = intent.getStringExtra(ParakeetDownloadService.EXTRA_TEXT);
-        if (ParakeetDownloadService.BROADCAST_PROGRESS.equals(action)) {
-            applyDownloadUiState(true);
-            if (parakeetProgressText != null && text != null) parakeetProgressText.setText(text);
-        } else if (ParakeetDownloadService.BROADCAST_COMPLETE.equals(action)) {
-            applyDownloadUiState(false);
-            if (parakeetProgressText != null) parakeetProgressText.setText("All models downloaded");
-            if (parakeetStatusView != null) updateParakeetStatus(parakeetStatusView, true);
-        } else if (ParakeetDownloadService.BROADCAST_ERROR.equals(action)) {
-            applyDownloadUiState(false);
-            if (parakeetProgressText != null && text != null) {
-                parakeetProgressText.setText("Error: " + text);
+        String text = intent.getStringExtra(ModelDownloadService.EXTRA_TEXT);
+        String modelId = intent.getStringExtra(ModelDownloadService.EXTRA_MODEL_ID);
+
+        boolean whisper = modelId != null
+                && com.voidterm.voice.WhisperModelCatalog.byFileName(modelId) != null;
+
+        if (whisper) {
+            if (whisperCatalogView == null) return;
+            if (ModelDownloadService.BROADCAST_PROGRESS.equals(action)) {
+                whisperCatalogView.onProgress(modelId, text != null ? text : "");
+            } else if (ModelDownloadService.BROADCAST_COMPLETE.equals(action)) {
+                whisperCatalogView.onDownloadEnded(modelId); // model becomes active
+            } else if (ModelDownloadService.BROADCAST_ERROR.equals(action)) {
+                whisperCatalogView.onDownloadEnded(null);
             }
+            return;
+        }
+
+        // Parakeet path (quantization id "int8"/"fp32")
+        if (parakeetQuantizationView == null) return;
+        if (ModelDownloadService.BROADCAST_PROGRESS.equals(action)) {
+            parakeetQuantizationView.onProgress(modelId, text != null ? text : "");
+        } else if (ModelDownloadService.BROADCAST_COMPLETE.equals(action)) {
+            parakeetQuantizationView.onDownloadEnded(modelId); // quantization becomes active
+        } else if (ModelDownloadService.BROADCAST_ERROR.equals(action)) {
+            parakeetQuantizationView.onDownloadEnded(null);
         }
     }
 
@@ -508,17 +548,45 @@ public class SettingsActivity extends Activity {
 
         prefs.edit()
                 .putString(SettingsDialog.KEY_MODEL_NAME, filename)
+                .putString(SettingsDialog.KEY_TRANSCRIPTION_ENGINE, SettingsDialog.ENGINE_WHISPER)
                 .putBoolean(SettingsDialog.KEY_MODEL_RELOAD_REQUESTED, true)
                 .apply();
 
-        // Update the label in the model section
-        if (sectionBodies[SECTION_MODEL] != null
-                && sectionBodies[SECTION_MODEL].getChildCount() > 0) {
-            View first = sectionBodies[SECTION_MODEL].getChildAt(0);
-            if (first instanceof TextView) {
-                ((TextView) first).setText("Current: " + filename);
-            }
-        }
+        if (whisperCatalogView != null) whisperCatalogView.setActive(filename);
+    }
+
+    /** Activate a downloaded whisper model: set it active AND switch the engine to whisper. */
+    private void activateWhisperModel(String fileName) {
+        prefs.edit()
+                .putString(SettingsDialog.KEY_MODEL_NAME, fileName)
+                .putString(SettingsDialog.KEY_TRANSCRIPTION_ENGINE, SettingsDialog.ENGINE_WHISPER)
+                .putBoolean(SettingsDialog.KEY_MODEL_RELOAD_REQUESTED, true)
+                .apply();
+        if (whisperCatalogView != null) whisperCatalogView.setActive(fileName);
+    }
+
+    private void confirmDeleteWhisperModel(com.voidterm.voice.WhisperModelCatalog.WhisperModel m) {
+        new AlertDialog.Builder(this)
+                .setTitle("Delete " + m.displayName + "?")
+                .setMessage("Remove " + m.fileName + " (" + m.sizeMb + " MB)?")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Delete", (d, w) -> {
+                    String active = prefs.getString(SettingsDialog.KEY_MODEL_NAME,
+                            SettingsDialog.DEFAULT_MODEL);
+                    com.voidterm.voice.WhisperModelManager.delete(this, m.fileName);
+                    if (m.fileName.equals(active)) {
+                        String next = com.voidterm.voice.WhisperModelManager
+                                .nextActiveAfterDelete(this, m.fileName);
+                        prefs.edit().putString(SettingsDialog.KEY_MODEL_NAME,
+                                next != null ? next : SettingsDialog.DEFAULT_MODEL).apply();
+                        if (whisperCatalogView != null) {
+                            whisperCatalogView.setActive(next != null ? next : SettingsDialog.DEFAULT_MODEL);
+                        }
+                    } else if (whisperCatalogView != null) {
+                        whisperCatalogView.setActive(active);
+                    }
+                })
+                .show();
     }
 
     private String getFileNameFromUri(Uri uri) {
@@ -537,7 +605,7 @@ public class SettingsActivity extends Activity {
     private LinearLayout buildTranscriptionSection() {
         LinearLayout body = makeSectionBody();
         boolean isWhisper = SettingsDialog.ENGINE_WHISPER.equals(
-                prefs.getString(SettingsDialog.KEY_TRANSCRIPTION_ENGINE, SettingsDialog.ENGINE_WHISPER));
+                prefs.getString(SettingsDialog.KEY_TRANSCRIPTION_ENGINE, SettingsDialog.ENGINE_DEFAULT));
 
         // --- Whisper-only controls container ---
         whisperTranscriptionControls = new LinearLayout(this);

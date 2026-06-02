@@ -141,7 +141,15 @@ public class ParakeetEngine implements TranscriptionEngine {
 
         new Thread(() -> {
             try {
-                if (!ParakeetModelManager.isModelComplete(context)) {
+                android.content.SharedPreferences sp = context.getSharedPreferences(
+                        SettingsDialog.PREFS_NAME, Context.MODE_PRIVATE);
+                ParakeetQuantization quant = ParakeetQuantization.byId(
+                        sp.getString(SettingsDialog.KEY_PARAKEET_QUANTIZATION,
+                                SettingsDialog.PARAKEET_QUANT_DEFAULT));
+                if (quant == null) quant = ParakeetQuantization.INT8;
+                final ParakeetQuantization fquant = quant;
+
+                if (!ParakeetModelManager.isModelComplete(context, fquant)) {
                     isLoading.set(false);
                     mainHandler.post(() -> callback.onError(
                             "Parakeet models not downloaded. Download them in Settings."));
@@ -175,17 +183,17 @@ public class ParakeetEngine implements TranscriptionEngine {
                 bufLog("Preprocessor loaded in " + (System.currentTimeMillis() - start) + "ms");
 
                 mainHandler.post(() -> callback.onProgress("Loading Parakeet encoder...", 30));
-                bufLog("Loading encoder: encoder-model.int8.onnx");
+                bufLog("Loading encoder: " + fquant.encoderFile);
                 start = System.currentTimeMillis();
                 encoderSession = env.createSession(
-                        new File(modelDir, "encoder-model.int8.onnx").getAbsolutePath(), opts);
+                        new File(modelDir, fquant.encoderFile).getAbsolutePath(), opts);
                 bufLog("Encoder loaded in " + (System.currentTimeMillis() - start) + "ms");
 
                 mainHandler.post(() -> callback.onProgress("Loading Parakeet decoder...", 60));
-                bufLog("Loading decoder: decoder_joint-model.int8.onnx");
+                bufLog("Loading decoder: " + fquant.decoderFile);
                 start = System.currentTimeMillis();
                 decoderSession = env.createSession(
-                        new File(modelDir, "decoder_joint-model.int8.onnx").getAbsolutePath(), opts);
+                        new File(modelDir, fquant.decoderFile).getAbsolutePath(), opts);
                 bufLog("Decoder loaded in " + (System.currentTimeMillis() - start) + "ms");
 
                 opts.close();

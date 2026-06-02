@@ -103,6 +103,10 @@ public final class SettingsDialog {
     public static final String ENGINE_PARAKEET = "parakeet";
     public static final String[] ENGINE_LABELS = {"Whisper (whisper.cpp)", "Parakeet TDT v3 (ONNX)"};
     public static final String[] ENGINE_VALUES = {ENGINE_WHISPER, ENGINE_PARAKEET};
+    // Single source of truth for the default engine. Parakeet is preferred — better
+    // accuracy than whisper.cpp on Quest, and neither engine ships a bundled model
+    // (assets/models/ is empty), so both require the user to provide one regardless.
+    public static final String ENGINE_DEFAULT = ENGINE_PARAKEET;
 
     // Parakeet (ONNX) engine tunables. Defaults live in ParakeetConfig.DEFAULT.
     public static final String KEY_PARAKEET_THREAD_OVERRIDE = "parakeet_thread_override";
@@ -110,6 +114,10 @@ public final class SettingsDialog {
     public static final String KEY_PARAKEET_OVERLAP_SEC = "parakeet_overlap_sec";
     public static final String KEY_PARAKEET_SILENCE_THRESHOLD = "parakeet_silence_threshold";
     public static final String KEY_PARAKEET_MAX_TOKENS_STEP = "parakeet_max_tokens_step";
+    // Parakeet quantization selection (int8 vs fp32). NOT a CONFIG_KEY — changing it
+    // requires a full engine reload (different ONNX files), via KEY_MODEL_RELOAD_REQUESTED.
+    public static final String KEY_PARAKEET_QUANTIZATION = "parakeet_quantization";
+    public static final String PARAKEET_QUANT_DEFAULT = "int8";
 
     public static final String[] LANGUAGE_LABELS = {
         "Auto-detect", "English", "Chinese", "Spanish", "Hindi", "Arabic",

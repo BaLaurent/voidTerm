@@ -32,7 +32,7 @@
             android:exported="false" />
 
         <service
-            android:name=".app.ParakeetDownloadService"
+            android:name=".app.ModelDownloadService"
             android:exported="false" />
 
         <activity
