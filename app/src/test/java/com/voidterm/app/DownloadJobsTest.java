@@ -30,4 +30,22 @@ public class DownloadJobsTest {
         Intent i = new Intent().putExtra(DownloadJobs.EXTRA_JOB_TYPE, "bogus");
         assertNull(DownloadJobs.fromIntent(RuntimeEnvironment.getApplication(), i));
     }
+
+    @Test
+    public void fromIntent_whisperType_returnsWhisperJobForModel() {
+        Intent i = new Intent()
+                .putExtra(DownloadJobs.EXTRA_JOB_TYPE, DownloadJobs.JOB_WHISPER)
+                .putExtra(DownloadJobs.EXTRA_MODEL_ID, "base");
+        DownloadJob job = DownloadJobs.fromIntent(RuntimeEnvironment.getApplication(), i);
+        assertNotNull(job);
+        assertEquals("ggml-base.bin", job.id());
+    }
+
+    @Test
+    public void fromIntent_whisperUnknownModel_returnsNull() {
+        Intent i = new Intent()
+                .putExtra(DownloadJobs.EXTRA_JOB_TYPE, DownloadJobs.JOB_WHISPER)
+                .putExtra(DownloadJobs.EXTRA_MODEL_ID, "nope");
+        assertNull(DownloadJobs.fromIntent(RuntimeEnvironment.getApplication(), i));
+    }
 }
