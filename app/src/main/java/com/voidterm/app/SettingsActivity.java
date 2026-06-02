@@ -92,6 +92,9 @@ public class SettingsActivity extends Activity {
     // Whisper-only transcription controls (hidden when Parakeet selected)
     private LinearLayout whisperTranscriptionControls;
 
+    // Whisper catalog view (model section)
+    private WhisperCatalogView whisperCatalogView;
+
     // Parakeet download UI (model section) — updated by the download broadcast receiver
     private Button parakeetDownloadBtn;
     private Button parakeetCancelBtn;
@@ -321,6 +324,25 @@ public class SettingsActivity extends Activity {
         });
         whisperControls.addView(browseBtn);
 
+        String activeModel = prefs.getString(SettingsDialog.KEY_MODEL_NAME, SettingsDialog.DEFAULT_MODEL);
+        whisperCatalogView = new WhisperCatalogView(this, new WhisperCatalogView.Listener() {
+            @Override public void onDownload(com.voidterm.voice.WhisperModelCatalog.WhisperModel m) {
+                if (ModelDownloadService.isRunning()) return; // one download at a time
+                startForegroundService(new Intent(SettingsActivity.this, ModelDownloadService.class)
+                        .setAction(ModelDownloadService.ACTION_START_DOWNLOAD)
+                        .putExtra(DownloadJobs.EXTRA_JOB_TYPE, DownloadJobs.JOB_WHISPER)
+                        .putExtra(DownloadJobs.EXTRA_MODEL_ID, m.id));
+                whisperCatalogView.onProgress(m.fileName, "Starting…");
+            }
+            @Override public void onActivate(com.voidterm.voice.WhisperModelCatalog.WhisperModel m) {
+                activateWhisperModel(m.fileName);
+            }
+            @Override public void onDelete(com.voidterm.voice.WhisperModelCatalog.WhisperModel m) {
+                confirmDeleteWhisperModel(m);
+            }
+        }, activeModel, textColor, mutedColor);
+        whisperControls.addView(whisperCatalogView);
+
         boolean isWhisper = SettingsDialog.ENGINE_WHISPER.equals(currentEngine);
         whisperControls.setVisibility(isWhisper ? View.VISIBLE : View.GONE);
         body.addView(whisperControls);
@@ -455,6 +477,24 @@ public class SettingsActivity extends Activity {
     private void onDownloadBroadcast(Intent intent) {
         String action = intent.getAction();
         String text = intent.getStringExtra(ModelDownloadService.EXTRA_TEXT);
+        String modelId = intent.getStringExtra(ModelDownloadService.EXTRA_MODEL_ID);
+
+        boolean whisper = modelId != null
+                && com.voidterm.voice.WhisperModelCatalog.byFileName(modelId) != null;
+
+        if (whisper) {
+            if (whisperCatalogView == null) return;
+            if (ModelDownloadService.BROADCAST_PROGRESS.equals(action)) {
+                whisperCatalogView.onProgress(modelId, text != null ? text : "");
+            } else if (ModelDownloadService.BROADCAST_COMPLETE.equals(action)) {
+                whisperCatalogView.onDownloadEnded(modelId); // model becomes active
+            } else if (ModelDownloadService.BROADCAST_ERROR.equals(action)) {
+                whisperCatalogView.onDownloadEnded(null);
+            }
+            return;
+        }
+
+        // Parakeet path (unchanged)
         if (ModelDownloadService.BROADCAST_PROGRESS.equals(action)) {
             applyDownloadUiState(true);
             if (parakeetProgressText != null && text != null) parakeetProgressText.setText(text);
@@ -520,6 +560,40 @@ public class SettingsActivity extends Activity {
                 ((TextView) first).setText("Current: " + filename);
             }
         }
+    }
+
+    /** Activate a downloaded whisper model: set it active AND switch the engine to whisper. */
+    private void activateWhisperModel(String fileName) {
+        prefs.edit()
+                .putString(SettingsDialog.KEY_MODEL_NAME, fileName)
+                .putString(SettingsDialog.KEY_TRANSCRIPTION_ENGINE, SettingsDialog.ENGINE_WHISPER)
+                .putBoolean(SettingsDialog.KEY_MODEL_RELOAD_REQUESTED, true)
+                .apply();
+        if (whisperCatalogView != null) whisperCatalogView.setActive(fileName);
+    }
+
+    private void confirmDeleteWhisperModel(com.voidterm.voice.WhisperModelCatalog.WhisperModel m) {
+        new AlertDialog.Builder(this)
+                .setTitle("Delete " + m.displayName + "?")
+                .setMessage("Remove " + m.fileName + " (" + m.sizeMb + " MB)?")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Delete", (d, w) -> {
+                    String active = prefs.getString(SettingsDialog.KEY_MODEL_NAME,
+                            SettingsDialog.DEFAULT_MODEL);
+                    com.voidterm.voice.WhisperModelManager.delete(this, m.fileName);
+                    if (m.fileName.equals(active)) {
+                        String next = com.voidterm.voice.WhisperModelManager
+                                .nextActiveAfterDelete(this, m.fileName);
+                        prefs.edit().putString(SettingsDialog.KEY_MODEL_NAME,
+                                next != null ? next : SettingsDialog.DEFAULT_MODEL).apply();
+                        if (whisperCatalogView != null) {
+                            whisperCatalogView.setActive(next != null ? next : SettingsDialog.DEFAULT_MODEL);
+                        }
+                    } else if (whisperCatalogView != null) {
+                        whisperCatalogView.setActive(active);
+                    }
+                })
+                .show();
     }
 
     private String getFileNameFromUri(Uri uri) {
