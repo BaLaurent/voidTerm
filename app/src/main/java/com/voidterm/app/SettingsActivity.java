@@ -779,7 +779,138 @@ public class SettingsActivity extends Activity {
 
         body.addView(advancedContainer);
 
+        // --- Advanced (Parakeet-only, collapsible) ---
+        addParakeetAdvanced(body, isWhisper);
+
         return body;
+    }
+
+    /**
+     * Parakeet (ONNX) tunables behind a collapsible "Advanced" group, shown only when
+     * the Parakeet engine is selected. Thread count changes the ONNX session, so it
+     * requests a model reload; the chunking params are read fresh per transcription.
+     */
+    private void addParakeetAdvanced(LinearLayout body, boolean isWhisper) {
+        View divider = makeDivider();
+        divider.setVisibility(isWhisper ? View.GONE : View.VISIBLE);
+        body.addView(divider);
+
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setVisibility(View.GONE);
+
+        Button advancedBtn = makeActionButton("Parakeet Advanced...");
+        advancedBtn.setVisibility(isWhisper ? View.GONE : View.VISIBLE);
+        advancedBtn.setOnClickListener(v -> {
+            if (container.getVisibility() == View.GONE) {
+                container.setVisibility(View.VISIBLE);
+                advancedBtn.setText("Parakeet Advanced ▲");
+            } else {
+                container.setVisibility(View.GONE);
+                advancedBtn.setText("Parakeet Advanced...");
+            }
+        });
+        body.addView(advancedBtn);
+
+        // Thread count override (0 = Auto). Changing threads rebuilds the ONNX session.
+        container.addView(makeLabel("Threads"));
+        String[] threadOptions = {"Auto", "1", "2", "3", "4", "5", "6", "7", "8"};
+        Spinner threadSpinner = makeSpinner(threadOptions);
+        int currentThreads = prefs.getInt(SettingsDialog.KEY_PARAKEET_THREAD_OVERRIDE, 0);
+        threadSpinner.setSelection(Math.max(0, Math.min(currentThreads, threadOptions.length - 1)));
+        threadSpinner.setOnItemSelectedListener(new SimpleItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> p, View v, int pos, long id) {
+                prefs.edit()
+                        .putInt(SettingsDialog.KEY_PARAKEET_THREAD_OVERRIDE, pos)
+                        .putBoolean(SettingsDialog.KEY_MODEL_RELOAD_REQUESTED, true)
+                        .apply();
+            }
+        });
+        container.addView(threadSpinner);
+
+        // Max audio window per inference pass (seconds). Audio longer than this is
+        // chunked at silence boundaries. Clamped to a tested-safe ceiling.
+        container.addView(makeLabel("Max audio per pass"));
+        String[] windowLabels = {"15 s", "20 s", "25 s", "30 s"};
+        int[] windowValues = {15, 20, 25, 30};
+        Spinner windowSpinner = makeSpinner(windowLabels);
+        int currentWindow = prefs.getInt(SettingsDialog.KEY_PARAKEET_MAX_WINDOW_SEC, 30);
+        windowSpinner.setSelection(nearestIndex(windowValues, currentWindow));
+        windowSpinner.setOnItemSelectedListener(new SimpleItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> p, View v, int pos, long id) {
+                prefs.edit().putInt(SettingsDialog.KEY_PARAKEET_MAX_WINDOW_SEC, windowValues[pos]).apply();
+            }
+        });
+        container.addView(windowSpinner);
+
+        // Chunk overlap (seconds) — only used on continuous-speech fallback splits.
+        container.addView(makeLabel("Chunk overlap"));
+        String[] overlapLabels = {"0.5 s", "1.0 s", "1.5 s", "2.0 s"};
+        float[] overlapValues = {0.5f, 1.0f, 1.5f, 2.0f};
+        Spinner overlapSpinner = makeSpinner(overlapLabels);
+        float currentOverlap = prefs.getFloat(SettingsDialog.KEY_PARAKEET_OVERLAP_SEC, 1.0f);
+        overlapSpinner.setSelection(nearestIndex(overlapValues, currentOverlap));
+        overlapSpinner.setOnItemSelectedListener(new SimpleItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> p, View v, int pos, long id) {
+                prefs.edit().putFloat(SettingsDialog.KEY_PARAKEET_OVERLAP_SEC, overlapValues[pos]).apply();
+            }
+        });
+        container.addView(overlapSpinner);
+
+        // Silence threshold (RMS) for choosing chunk cut points.
+        container.addView(makeLabel("Silence sensitivity"));
+        String[] silenceLabels = {"0.003 (sensitive)", "0.005", "0.008", "0.012 (strict)"};
+        float[] silenceValues = {0.003f, 0.005f, 0.008f, 0.012f};
+        Spinner silenceSpinner = makeSpinner(silenceLabels);
+        float currentSilence = prefs.getFloat(SettingsDialog.KEY_PARAKEET_SILENCE_THRESHOLD, 0.005f);
+        silenceSpinner.setSelection(nearestIndex(silenceValues, currentSilence));
+        silenceSpinner.setOnItemSelectedListener(new SimpleItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> p, View v, int pos, long id) {
+                prefs.edit().putFloat(SettingsDialog.KEY_PARAKEET_SILENCE_THRESHOLD, silenceValues[pos]).apply();
+            }
+        });
+        container.addView(silenceSpinner);
+
+        // Max tokens per encoder frame (forward-progress guard).
+        container.addView(makeLabel("Max tokens per step"));
+        String[] tokenLabels = {"5", "10", "15", "20"};
+        int[] tokenValues = {5, 10, 15, 20};
+        Spinner tokenSpinner = makeSpinner(tokenLabels);
+        int currentTokens = prefs.getInt(SettingsDialog.KEY_PARAKEET_MAX_TOKENS_STEP, 10);
+        tokenSpinner.setSelection(nearestIndex(tokenValues, currentTokens));
+        tokenSpinner.setOnItemSelectedListener(new SimpleItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> p, View v, int pos, long id) {
+                prefs.edit().putInt(SettingsDialog.KEY_PARAKEET_MAX_TOKENS_STEP, tokenValues[pos]).apply();
+            }
+        });
+        container.addView(tokenSpinner);
+
+        body.addView(container);
+    }
+
+    /** Index of the array entry closest to {@code target} (for value-keyed spinners). */
+    private static int nearestIndex(int[] values, int target) {
+        int best = 0, bestDiff = Integer.MAX_VALUE;
+        for (int i = 0; i < values.length; i++) {
+            int diff = Math.abs(values[i] - target);
+            if (diff < bestDiff) { bestDiff = diff; best = i; }
+        }
+        return best;
+    }
+
+    private static int nearestIndex(float[] values, float target) {
+        int best = 0;
+        float bestDiff = Float.MAX_VALUE;
+        for (int i = 0; i < values.length; i++) {
+            float diff = Math.abs(values[i] - target);
+            if (diff < bestDiff) { bestDiff = diff; best = i; }
+        }
+        return best;
     }
 
     /** Show/hide whisper-specific controls in the Transcription section. */

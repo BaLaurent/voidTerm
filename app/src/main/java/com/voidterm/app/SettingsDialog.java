@@ -104,6 +104,13 @@ public final class SettingsDialog {
     public static final String[] ENGINE_LABELS = {"Whisper (whisper.cpp)", "Parakeet TDT v3 (ONNX)"};
     public static final String[] ENGINE_VALUES = {ENGINE_WHISPER, ENGINE_PARAKEET};
 
+    // Parakeet (ONNX) engine tunables. Defaults live in ParakeetConfig.DEFAULT.
+    public static final String KEY_PARAKEET_THREAD_OVERRIDE = "parakeet_thread_override";
+    public static final String KEY_PARAKEET_MAX_WINDOW_SEC = "parakeet_max_window_sec";
+    public static final String KEY_PARAKEET_OVERLAP_SEC = "parakeet_overlap_sec";
+    public static final String KEY_PARAKEET_SILENCE_THRESHOLD = "parakeet_silence_threshold";
+    public static final String KEY_PARAKEET_MAX_TOKENS_STEP = "parakeet_max_tokens_step";
+
     public static final String[] LANGUAGE_LABELS = {
         "Auto-detect", "English", "Chinese", "Spanish", "Hindi", "Arabic",
         "French", "Bengali", "Portuguese", "Russian", "Japanese", "German",

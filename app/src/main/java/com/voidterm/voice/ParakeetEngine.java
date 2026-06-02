@@ -13,10 +13,13 @@ import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.nio.LongBuffer;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import ai.onnxruntime.OnnxTensor;
@@ -46,11 +49,25 @@ public class ParakeetEngine implements TranscriptionEngine {
     // Model constants
     private static final int ENCODER_DIM = 1024;
     private static final int DECODER_STATE_DIM = 640;
-    private static final int SUBSAMPLING_FACTOR = 8;
-    private static final int MAX_TOKENS_PER_STEP = 10;
     private static final long TRANSCRIPTION_TIMEOUT_MS = 120_000;
 
     private final SharedPreferences prefs;
+
+    // Cached config — avoids SharedPreferences reads per transcription (mirrors WhisperEngine).
+    private volatile ParakeetConfig cachedConfig;
+
+    private static final Set<String> CONFIG_KEYS = new HashSet<>(Arrays.asList(
+            SettingsDialog.KEY_PARAKEET_THREAD_OVERRIDE, SettingsDialog.KEY_PARAKEET_MAX_WINDOW_SEC,
+            SettingsDialog.KEY_PARAKEET_OVERLAP_SEC, SettingsDialog.KEY_PARAKEET_SILENCE_THRESHOLD,
+            SettingsDialog.KEY_PARAKEET_MAX_TOKENS_STEP
+    ));
+
+    private final SharedPreferences.OnSharedPreferenceChangeListener configInvalidator =
+            (p, key) -> {
+                if (CONFIG_KEYS.contains(key)) {
+                    cachedConfig = null;
+                }
+            };
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final AtomicBoolean isTranscribing = new AtomicBoolean(false);
     private final AtomicBoolean isLoading = new AtomicBoolean(false);
@@ -68,6 +85,37 @@ public class ParakeetEngine implements TranscriptionEngine {
 
     public ParakeetEngine(SharedPreferences prefs) {
         this.prefs = prefs;
+        prefs.registerOnSharedPreferenceChangeListener(configInvalidator);
+        cachedConfig = readConfig(prefs);
+    }
+
+    private ParakeetConfig buildConfig() {
+        ParakeetConfig config = cachedConfig;
+        if (config != null) return config;
+        config = readConfig(prefs);
+        cachedConfig = config;
+        return config;
+    }
+
+    private static ParakeetConfig readConfig(SharedPreferences prefs) {
+        int windowSec = clamp(
+                prefs.getInt(SettingsDialog.KEY_PARAKEET_MAX_WINDOW_SEC,
+                        ParakeetConfig.DEFAULT.maxWindowSamples / AudioCapture.SAMPLE_RATE),
+                ParakeetConfig.MAX_WINDOW_SEC_FLOOR, ParakeetConfig.MAX_WINDOW_SEC_CEILING);
+        float overlapSec = prefs.getFloat(SettingsDialog.KEY_PARAKEET_OVERLAP_SEC,
+                ParakeetConfig.DEFAULT.overlapSamples / (float) AudioCapture.SAMPLE_RATE);
+        return new ParakeetConfig(
+                prefs.getInt(SettingsDialog.KEY_PARAKEET_THREAD_OVERRIDE, ParakeetConfig.DEFAULT.threadCount),
+                windowSec * AudioCapture.SAMPLE_RATE,
+                Math.round(overlapSec * AudioCapture.SAMPLE_RATE),
+                prefs.getFloat(SettingsDialog.KEY_PARAKEET_SILENCE_THRESHOLD, ParakeetConfig.DEFAULT.silenceThreshold),
+                ParakeetConfig.DEFAULT.searchBandSamples, // testability seam, not user-facing
+                prefs.getInt(SettingsDialog.KEY_PARAKEET_MAX_TOKENS_STEP, ParakeetConfig.DEFAULT.maxTokensPerStep)
+        );
+    }
+
+    private static int clamp(int v, int min, int max) {
+        return Math.max(min, Math.min(v, max));
     }
 
     private void bufLog(String msg) {
@@ -104,7 +152,21 @@ public class ParakeetEngine implements TranscriptionEngine {
 
                 mainHandler.post(() -> callback.onProgress("Loading Parakeet preprocessor...", 10));
                 env = OrtEnvironment.getEnvironment();
+
+                // Spike: log which execution providers are actually bundled in the AAR
+                // on this device (cannot be verified statically). Informs whether an
+                // XNNPACK toggle is worth building later — no behavior change here.
+                bufLog("Available ONNX providers: " + OrtEnvironment.getAvailableProviders());
+
+                ParakeetConfig config = buildConfig();
                 OrtSession.SessionOptions opts = new OrtSession.SessionOptions();
+                // Graph optimization is a free, always-on win (no reason to pick less).
+                opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);
+                // Intra-op threads help the encoder's large matmuls. 0 = auto via CpuInfo.
+                int threads = config.threadCount > 0
+                        ? config.threadCount : CpuInfo.getPreferredThreadCount();
+                opts.setIntraOpNumThreads(threads);
+                bufLog("Session options: optLevel=ALL_OPT, intraOpThreads=" + threads);
 
                 bufLog("Loading preprocessor: nemo128.onnx");
                 long start = System.currentTimeMillis();
@@ -172,13 +234,21 @@ public class ParakeetEngine implements TranscriptionEngine {
 
         abortFlag.set(false);
 
+        // Split once: audio that fits one encoder pass yields a single chunk referencing
+        // the original array (no copy, identical to the pre-chunking path). Longer audio
+        // is split at silence boundaries — see AudioChunker.
+        ParakeetConfig config = buildConfig();
+        List<AudioChunker.Chunk> chunks = AudioChunker.split(audio, config);
+
         bufLog("Transcription start: " + audio.length + " samples ("
-                + String.format("%.1f", audio.length / 16000f) + "s)");
+                + String.format("%.1f", audio.length / 16000f) + "s), chunks=" + chunks.size());
 
         Thread thread = new Thread(() -> {
             try {
                 long startTime = System.currentTimeMillis();
-                String result = runInference(audio);
+                String result = (chunks.size() == 1)
+                        ? runInference(chunks.get(0).samples)
+                        : runChunked(chunks, callback);
                 long elapsed = System.currentTimeMillis() - startTime;
 
                 if (!isTranscribing.compareAndSet(true, false)) {
@@ -212,14 +282,78 @@ public class ParakeetEngine implements TranscriptionEngine {
         transcribeThread = thread;
         thread.start();
 
-        // Watchdog timeout
+        // Watchdog timeout — scaled by chunk count for long, multi-pass audio.
+        long timeout = TRANSCRIPTION_TIMEOUT_MS * Math.max(1, chunks.size());
         mainHandler.postDelayed(() -> {
             if (isTranscribing.compareAndSet(true, false)) {
                 bufErr("Transcription timed out");
                 abortFlag.set(true);
                 callback.onError("Transcription timed out");
             }
-        }, TRANSCRIPTION_TIMEOUT_MS);
+        }, timeout);
+    }
+
+    /**
+     * Transcribe a multi-chunk recording, merging chunk texts into a rolling transcript.
+     * Checks for cancellation between chunks (per-chunk cancellation is handled inside
+     * runInference). Fallback (continuous-speech) chunks carry an overlap region, so
+     * their leading duplicated words are de-duplicated against the previous chunk.
+     */
+    private String runChunked(List<AudioChunker.Chunk> chunks, Callback callback) throws OrtException {
+        StringBuilder full = new StringBuilder();
+        String prevText = "";
+        int total = chunks.size();
+        for (int i = 0; i < total; i++) {
+            if (abortFlag.get()) break;
+
+            final int idx = i;
+            mainHandler.post(() -> callback.onProgress(
+                    "Transcribing " + (idx + 1) + "/" + total, (int) (idx * 100.0 / total)));
+
+            String text = runInference(chunks.get(i).samples);
+            text = (text == null) ? "" : text.trim();
+
+            if (chunks.get(i).isFallbackSplit) {
+                text = dedupLeading(prevText, text);
+            }
+            if (!text.isEmpty()) {
+                if (full.length() > 0) full.append(' ');
+                full.append(text);
+            }
+            prevText = text;
+            bufLog("Chunk " + (idx + 1) + "/" + total + " -> \"" + text + "\"");
+        }
+        return full.toString();
+    }
+
+    /**
+     * Remove the leading words of {@code cur} that duplicate the trailing words of
+     * {@code prev} (the overlap region of a fallback hard split). Word-level,
+     * case-insensitive, bounded to a small window.
+     */
+    static String dedupLeading(String prev, String cur) {
+        if (prev.isEmpty() || cur.isEmpty()) return cur;
+        String[] prevWords = prev.split("\\s+");
+        String[] curWords = cur.split("\\s+");
+        int maxK = Math.min(Math.min(prevWords.length, curWords.length), 12);
+        int bestK = 0;
+        for (int k = maxK; k >= 1; k--) {
+            boolean match = true;
+            for (int j = 0; j < k; j++) {
+                if (!prevWords[prevWords.length - k + j].equalsIgnoreCase(curWords[j])) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) { bestK = k; break; }
+        }
+        if (bestK == 0) return cur;
+        StringBuilder sb = new StringBuilder();
+        for (int j = bestK; j < curWords.length; j++) {
+            if (sb.length() > 0) sb.append(' ');
+            sb.append(curWords[j]);
+        }
+        return sb.toString();
     }
 
     /**
@@ -328,7 +462,7 @@ public class ParakeetEngine implements TranscriptionEngine {
         bufLog("Step 3: Decoding (" + encoderLength + " time steps)");
         stepStart = System.currentTimeMillis();
 
-        int[] tokenIds = greedyDecode(encoderOutput, (int) encoderLength);
+        int[] tokenIds = greedyDecode(encoderOutput, (int) encoderLength, buildConfig().maxTokensPerStep);
 
         bufLog("Decoding done in " + (System.currentTimeMillis() - stepStart)
                 + "ms, " + tokenIds.length + " tokens");
@@ -357,7 +491,7 @@ public class ParakeetEngine implements TranscriptionEngine {
      * model gets re-queried far too often over silence and emits spurious punctuation that
      * self-reinforces through the token feedback (the "..." artifact).
      */
-    private int[] greedyDecode(float[][] encoderOutput, int encoderLength) throws OrtException {
+    private int[] greedyDecode(float[][] encoderOutput, int encoderLength, int maxTokensPerStep) throws OrtException {
         List<Integer> emittedTokens = new ArrayList<>();
 
         // Initialize RNN decoder states with zeros
@@ -445,7 +579,7 @@ public class ParakeetEngine implements TranscriptionEngine {
                 if (step > 0) {
                     t += step;
                     emittedAtStep = 0;
-                } else if (isBlank || emittedAtStep >= MAX_TOKENS_PER_STEP) {
+                } else if (isBlank || emittedAtStep >= maxTokensPerStep) {
                     t++;
                     emittedAtStep = 0;
                 }
@@ -506,6 +640,7 @@ public class ParakeetEngine implements TranscriptionEngine {
     public void release() {
         isDestroyed = true;
         abortFlag.set(true);
+        prefs.unregisterOnSharedPreferenceChangeListener(configInvalidator);
 
         Thread thread = transcribeThread;
         if (thread != null && thread.isAlive()) {

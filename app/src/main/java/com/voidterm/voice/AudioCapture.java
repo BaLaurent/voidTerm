@@ -5,24 +5,35 @@ import android.media.AudioRecord;
 import android.media.MediaRecorder;
 import android.util.Log;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Audio capture component for Push-to-Talk voice input.
  * Records microphone input as PCM float32 at 16kHz mono.
- * Thread-safe start/stop with 30-second maximum duration.
+ * Thread-safe start/stop.
+ *
+ * Audio is accumulated as a list of 100ms read chunks and concatenated on stop —
+ * this removes the old fixed-size pre-allocation and the hard 30s cap. Only a high
+ * safety ceiling remains to bound runaway memory. Splitting long audio into
+ * inference-sized windows is a separate, engine-specific concern (see AudioChunker).
  */
 public class AudioCapture {
 
     private static final String TAG = "AudioCapture";
     public static final int SAMPLE_RATE = 16000;
-    private static final int MAX_DURATION_SECONDS = 30;
-    private static final int MAX_SAMPLES = SAMPLE_RATE * MAX_DURATION_SECONDS; // 480,000
+    // Safety ceiling only (not a transcription cap): bounds memory if PTT is held forever.
+    private static final int SAFETY_MAX_DURATION_SECONDS = 120;
+    private static final int SAFETY_MAX_SAMPLES = SAMPLE_RATE * SAFETY_MAX_DURATION_SECONDS;
     private static final int CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO;
     private static final int READ_CHUNK_SAMPLES = SAMPLE_RATE / 10; // 100ms chunks at 16kHz = 1600
     // RMS threshold below which audio is considered silence (empirical: ~-60 dBFS)
     private static final float SILENCE_RMS_THRESHOLD = 0.001f;
 
     private AudioRecord audioRecord;
-    private float[] buffer; // allocated per recording, null when idle
+    // Accumulated 100ms read chunks (float32). Written only by the recording thread,
+    // read in stopRecording() after the thread is joined — no concurrent access.
+    private final List<float[]> recordedChunks = new ArrayList<>();
     private volatile int samplesRecorded = 0;
     private volatile boolean isRecording = false;
     private volatile boolean recordingStopped = false;
@@ -108,7 +119,7 @@ public class AudioCapture {
             Log.i(TAG, "AudioRecord using format: " +
                     (activeAudioFormat == AudioFormat.ENCODING_PCM_FLOAT ? "PCM_FLOAT" : "PCM_16BIT"));
 
-            buffer = new float[MAX_SAMPLES];
+            recordedChunks.clear();
             samplesRecorded = 0;
             currentVolumeLevel = 0f;
             recordingStopped = false;
@@ -135,24 +146,27 @@ public class AudioCapture {
             recordLoopShort();
         }
 
-        if (samplesRecorded >= MAX_SAMPLES) {
-            Log.i(TAG, "Max recording duration reached (30s)");
+        if (samplesRecorded >= SAFETY_MAX_SAMPLES) {
+            Log.i(TAG, "Safety max recording duration reached ("
+                    + SAFETY_MAX_DURATION_SECONDS + "s)");
         }
     }
 
     private void recordLoopFloat() {
         float[] readBuffer = new float[READ_CHUNK_SAMPLES];
 
-        while (isRecording && samplesRecorded < MAX_SAMPLES) {
-            int remaining = MAX_SAMPLES - samplesRecorded;
+        while (isRecording && samplesRecorded < SAFETY_MAX_SAMPLES) {
+            int remaining = SAFETY_MAX_SAMPLES - samplesRecorded;
             int toRead = Math.min(readBuffer.length, remaining);
 
             int read = audioRecord.read(readBuffer, 0, toRead, AudioRecord.READ_BLOCKING);
 
             if (read > 0) {
-                System.arraycopy(readBuffer, 0, buffer, samplesRecorded, read);
+                float[] chunk = new float[read];
+                System.arraycopy(readBuffer, 0, chunk, 0, read);
+                recordedChunks.add(chunk);
                 samplesRecorded += read;
-                currentVolumeLevel = computeRms(readBuffer, read);
+                currentVolumeLevel = computeRms(chunk, read);
             } else if (read < 0) {
                 Log.e(TAG, "AudioRecord read error: " + read);
                 break;
@@ -163,19 +177,21 @@ public class AudioCapture {
     private void recordLoopShort() {
         short[] readBuffer = new short[READ_CHUNK_SAMPLES];
 
-        while (isRecording && samplesRecorded < MAX_SAMPLES) {
-            int remaining = MAX_SAMPLES - samplesRecorded;
+        while (isRecording && samplesRecorded < SAFETY_MAX_SAMPLES) {
+            int remaining = SAFETY_MAX_SAMPLES - samplesRecorded;
             int toRead = Math.min(readBuffer.length, remaining);
 
             int read = audioRecord.read(readBuffer, 0, toRead, AudioRecord.READ_BLOCKING);
 
             if (read > 0) {
-                // Convert PCM_16BIT shorts to float32 for whisper.cpp
+                // Convert PCM_16BIT shorts to float32 for the engine
+                float[] chunk = new float[read];
                 for (int i = 0; i < read; i++) {
-                    buffer[samplesRecorded + i] = readBuffer[i] / 32768.0f;
+                    chunk[i] = readBuffer[i] / 32768.0f;
                 }
+                recordedChunks.add(chunk);
                 samplesRecorded += read;
-                currentVolumeLevel = computeRms(buffer, samplesRecorded - read, read);
+                currentVolumeLevel = computeRms(chunk, read);
             } else if (read < 0) {
                 Log.e(TAG, "AudioRecord read error: " + read);
                 break;
@@ -241,21 +257,29 @@ public class AudioCapture {
                 recordingThread = null;
             }
 
-            // Copy only the recorded portion
+            // Concatenate the accumulated 100ms chunks into one contiguous array.
             int recorded = samplesRecorded;
             float[] result;
-            if (recorded > 0 && buffer != null) {
-                // Check if the entire recording is silence before copying
-                float rms = computeRms(buffer, 0, recorded);
+            if (recorded > 0 && !recordedChunks.isEmpty()) {
+                float[] joined = new float[recorded];
+                int offset = 0;
+                for (float[] chunk : recordedChunks) {
+                    int n = Math.min(chunk.length, recorded - offset);
+                    if (n <= 0) break;
+                    System.arraycopy(chunk, 0, joined, offset, n);
+                    offset += n;
+                }
+
+                // Check if the entire recording is silence before returning
+                float rms = computeRms(joined, 0, offset);
                 if (rms < SILENCE_RMS_THRESHOLD) {
                     Log.w(TAG, "Recording is silence (RMS=" + String.format("%.6f", rms) +
                             " < threshold=" + SILENCE_RMS_THRESHOLD + "), returning empty");
                     result = new float[0];
                 } else {
-                    result = new float[recorded];
-                    System.arraycopy(buffer, 0, result, 0, recorded);
-                    Log.i(TAG, "Recording stopped: " + recorded + " samples (" +
-                            String.format("%.1f", recorded / (float) SAMPLE_RATE) + "s), RMS=" +
+                    result = joined;
+                    Log.i(TAG, "Recording stopped: " + offset + " samples (" +
+                            String.format("%.1f", offset / (float) SAMPLE_RATE) + "s), RMS=" +
                             String.format("%.4f", rms));
                 }
             } else {
@@ -263,8 +287,8 @@ public class AudioCapture {
                 Log.w(TAG, "Recording stopped: no samples captured");
             }
 
-            // Release the large buffer when not recording
-            buffer = null;
+            // Release accumulated chunks when not recording
+            recordedChunks.clear();
             currentVolumeLevel = 0f;
 
             return result;
@@ -323,7 +347,7 @@ public class AudioCapture {
                 audioRecord.release();
                 audioRecord = null;
             }
-            buffer = null;
+            recordedChunks.clear();
             Log.i(TAG, "AudioCapture released");
         }
     }
