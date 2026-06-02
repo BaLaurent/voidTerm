@@ -15,8 +15,11 @@ public final class DownloadJobs {
 
     public static DownloadJob fromIntent(Context context, Intent intent) {
         String type = intent.getStringExtra(EXTRA_JOB_TYPE);
-        if (ParakeetDownloadJob.ID.equals(type)) {
-            return new ParakeetDownloadJob(context);
+        if (ParakeetDownloadJob.JOB_TYPE.equals(type)) {
+            String qid = intent.getStringExtra(ModelDownloadService.EXTRA_MODEL_ID);
+            com.voidterm.voice.ParakeetQuantization q =
+                    com.voidterm.voice.ParakeetQuantization.byId(qid);
+            return q == null ? null : new ParakeetDownloadJob(context, q);
         }
         if (JOB_WHISPER.equals(type)) {
             // Start intent carries the SHORT model id ("base") under EXTRA_MODEL_ID;

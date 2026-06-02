@@ -17,12 +17,31 @@ import static org.junit.Assert.assertNull;
 public class DownloadJobsTest {
 
     @Test
-    public void fromIntent_parakeetType_returnsParakeetJob() {
+    public void fromIntent_parakeetInt8_returnsJobWithInt8Id() {
         Intent i = new Intent()
-                .putExtra(DownloadJobs.EXTRA_JOB_TYPE, ParakeetDownloadJob.ID);
+                .putExtra(DownloadJobs.EXTRA_JOB_TYPE, ParakeetDownloadJob.JOB_TYPE)
+                .putExtra(ModelDownloadService.EXTRA_MODEL_ID, "int8");
         DownloadJob job = DownloadJobs.fromIntent(RuntimeEnvironment.getApplication(), i);
         assertNotNull(job);
-        assertEquals(ParakeetDownloadJob.ID, job.id());
+        assertEquals("int8", job.id());
+    }
+
+    @Test
+    public void fromIntent_parakeetFp32_returnsJobWithFp32Id() {
+        Intent i = new Intent()
+                .putExtra(DownloadJobs.EXTRA_JOB_TYPE, ParakeetDownloadJob.JOB_TYPE)
+                .putExtra(ModelDownloadService.EXTRA_MODEL_ID, "fp32");
+        DownloadJob job = DownloadJobs.fromIntent(RuntimeEnvironment.getApplication(), i);
+        assertNotNull(job);
+        assertEquals("fp32", job.id());
+    }
+
+    @Test
+    public void fromIntent_parakeetUnknownQuant_returnsNull() {
+        Intent i = new Intent()
+                .putExtra(DownloadJobs.EXTRA_JOB_TYPE, ParakeetDownloadJob.JOB_TYPE)
+                .putExtra(ModelDownloadService.EXTRA_MODEL_ID, "nope");
+        assertNull(DownloadJobs.fromIntent(RuntimeEnvironment.getApplication(), i));
     }
 
     @Test

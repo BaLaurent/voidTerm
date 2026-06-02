@@ -377,7 +377,8 @@ public class SettingsActivity extends Activity {
             if (ModelDownloadService.isRunning()) return;
             startForegroundService(new Intent(this, ModelDownloadService.class)
                     .setAction(ModelDownloadService.ACTION_START_DOWNLOAD)
-                    .putExtra(DownloadJobs.EXTRA_JOB_TYPE, ParakeetDownloadJob.ID));
+                    .putExtra(DownloadJobs.EXTRA_JOB_TYPE, ParakeetDownloadJob.JOB_TYPE)
+                    .putExtra(ModelDownloadService.EXTRA_MODEL_ID, SettingsDialog.PARAKEET_QUANT_DEFAULT));
             applyDownloadUiState(true);
         });
         parakeetControls.addView(parakeetDownloadBtn);
