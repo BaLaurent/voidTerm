@@ -549,6 +549,7 @@ public class SettingsActivity extends Activity {
 
         prefs.edit()
                 .putString(SettingsDialog.KEY_MODEL_NAME, filename)
+                .putString(SettingsDialog.KEY_TRANSCRIPTION_ENGINE, SettingsDialog.ENGINE_WHISPER)
                 .putBoolean(SettingsDialog.KEY_MODEL_RELOAD_REQUESTED, true)
                 .apply();
 
