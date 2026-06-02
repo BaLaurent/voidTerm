@@ -114,6 +114,10 @@ public final class SettingsDialog {
     public static final String KEY_PARAKEET_OVERLAP_SEC = "parakeet_overlap_sec";
     public static final String KEY_PARAKEET_SILENCE_THRESHOLD = "parakeet_silence_threshold";
     public static final String KEY_PARAKEET_MAX_TOKENS_STEP = "parakeet_max_tokens_step";
+    // Parakeet quantization selection (int8 vs fp32). NOT a CONFIG_KEY — changing it
+    // requires a full engine reload (different ONNX files), via KEY_MODEL_RELOAD_REQUESTED.
+    public static final String KEY_PARAKEET_QUANTIZATION = "parakeet_quantization";
+    public static final String PARAKEET_QUANT_DEFAULT = "int8";
 
     public static final String[] LANGUAGE_LABELS = {
         "Auto-detect", "English", "Chinese", "Spanish", "Hindi", "Arabic",
