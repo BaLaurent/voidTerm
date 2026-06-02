@@ -16,9 +16,9 @@ public final class GestureTiming {
         this.comboWindowMs = comboWindowMs;
     }
 
-    public static final GestureTiming FAST = new GestureTiming(200, 400, 50);
-    public static final GestureTiming NORMAL = new GestureTiming(280, 500, 60);
-    public static final GestureTiming SLOW = new GestureTiming(400, 700, 90);
+    public static final GestureTiming FAST = new GestureTiming(200, 400, 120);
+    public static final GestureTiming NORMAL = new GestureTiming(280, 500, 180);
+    public static final GestureTiming SLOW = new GestureTiming(400, 700, 280);
 
     public static GestureTiming fromPreset(String preset) {
         if ("fast".equals(preset)) return FAST;

@@ -11,7 +11,7 @@ public class GestureTimingTest {
         GestureTiming t = GestureTiming.fromPreset("fast");
         assertEquals(200, t.multiTapWindowMs);
         assertEquals(400, t.longPressMs);
-        assertEquals(50, t.comboWindowMs);
+        assertEquals(120, t.comboWindowMs);
     }
 
     @Test
@@ -19,7 +19,7 @@ public class GestureTimingTest {
         GestureTiming t = GestureTiming.fromPreset("slow");
         assertEquals(400, t.multiTapWindowMs);
         assertEquals(700, t.longPressMs);
-        assertEquals(90, t.comboWindowMs);
+        assertEquals(280, t.comboWindowMs);
     }
 
     @Test
