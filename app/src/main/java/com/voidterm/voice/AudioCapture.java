@@ -42,6 +42,14 @@ public class AudioCapture {
     private final Object lock = new Object();
     private int activeAudioFormat; // actual format used (PCM_FLOAT or PCM_16BIT)
 
+    // Pauses other apps' media for the duration of a capture (see AudioFocus).
+    // Held from a successful startRecording() until stopRecording()/release().
+    private final AudioFocus audioFocus;
+
+    public AudioCapture(AudioFocus audioFocus) {
+        this.audioFocus = audioFocus;
+    }
+
     /**
      * Start recording audio on a dedicated background thread.
      * Thread-safe: guards against double-start.
@@ -129,6 +137,10 @@ public class AudioCapture {
 
             recordingThread = new Thread(this::recordLoop, "AudioCapture-Thread");
             recordingThread.start();
+
+            // Acquire only now that the mic session is committed — never before the
+            // format fallbacks above, which can still bail out with return false.
+            audioFocus.acquire();
 
             Log.i(TAG, "Recording started");
             return true;
@@ -234,6 +246,11 @@ public class AudioCapture {
             }
 
             isRecording = false;
+
+            // Balances the acquire() in startRecording() — other apps' media resumes.
+            // Reached from every stop path (PTT release, double-tap/onPause cancel,
+            // pipeline error recovery), so focus is never left dangling.
+            audioFocus.abandon();
 
             // Stop AudioRecord BEFORE joining the thread — the record loop may be
             // blocked in READ_BLOCKING and will never see isRecording==false until
@@ -348,6 +365,9 @@ public class AudioCapture {
                 audioRecord = null;
             }
             recordedChunks.clear();
+            // Safety net for the release-while-recording path (idempotent if
+            // stopRecording() already abandoned).
+            audioFocus.abandon();
             Log.i(TAG, "AudioCapture released");
         }
     }

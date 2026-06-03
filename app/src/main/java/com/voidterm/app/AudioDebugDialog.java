@@ -21,6 +21,7 @@ import android.content.SharedPreferences;
 
 import com.voidterm.voice.AudioCapture;
 import com.voidterm.voice.AudioConfig;
+import com.voidterm.voice.AudioFocus;
 import com.voidterm.voice.AudioPreprocessor;
 
 /**
@@ -174,7 +175,7 @@ public class AudioDebugDialog {
                 // Start recording
                 stopPlayback();
                 stopBtn.setEnabled(false);
-                capture = new AudioCapture();
+                capture = new AudioCapture(new AudioFocus(activity));
                 if (capture.startRecording()) {
                     recordBtn.setText("Stop Recording");
                     playRawBtn.setEnabled(false);

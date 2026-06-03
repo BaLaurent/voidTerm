@@ -104,7 +104,7 @@ public class VoiceInputManager implements TranscriptionListener {
         this.callback = callback;
         this.appContext = context.getApplicationContext();
         this.mainHandler = new Handler(Looper.getMainLooper());
-        this.audioCapture = new AudioCapture();
+        this.audioCapture = new AudioCapture(new AudioFocus(this.appContext));
 
         overlay.setTranscriptionListener(this);
 
