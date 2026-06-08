@@ -54,6 +54,12 @@ public final class SettingsDialog {
     public static final String KEY_VOLUME_UP_MACRO = "volume_up_macro";
     public static final String KEY_VOLUME_DOWN_MACRO = "volume_down_macro";
     public static final String VOLUME_DEFAULT = "default";
+    // VoidTerm self-control actions (session navigation / drawer). Shared by the
+    // back/volume keys and every gesture slot, dispatched in TermuxActivity.
+    public static final String ACTION_SESSION_NEXT = "session_next";
+    public static final String ACTION_SESSION_PREV = "session_prev";
+    public static final String ACTION_SESSION_DRAWER = "session_drawer";
+    public static final String ACTION_SESSION_NEW = "session_new";
 
     // --- Key gesture slots (multi-tap / long / combo) ---
     // Single-tap reuses the existing keys above; "default" sentinel reuses VOLUME_DEFAULT.

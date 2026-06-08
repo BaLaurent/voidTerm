@@ -167,7 +167,7 @@ Single-tap behavior per key is a Spinner-selected mode; double/triple/long-press
 | Vol+ | default / escape / toggle_keyboard / macro / voice_input | `volume_up_behavior` (+`_macro`) | `TermuxActivity.handleCustomVolumeKey()` |
 | Vol− | (same five) | `volume_down_behavior` (+`_macro`) | `TermuxActivity.handleCustomVolumeKey()` |
 
-The shared behavior switch is `TermuxActivity.dispatchKeyAction(behavior, macroPrefKey)` (returns false on `default`/unknown so the caller decides).
+The shared behavior switch is `TermuxActivity.dispatchKeyAction(behavior, macroPrefKey)` (returns false on `default`/unknown so the caller decides). Besides the terminal actions above it also routes **VoidTerm self-control** actions — available on every single/gesture slot and selectable in the same Spinners: `session_next`/`session_prev` cycle the active session (wrapping both ends via `cycleSession`), `session_drawer` toggles the left session drawer (`toggleSessionDrawer`), and `session_new` opens a fresh session (`createNewSession`).
 
 `KeyGestureDetector` (`com.voidterm.input`) is a pure **timed state machine** — reads no prefs, never touches the terminal (policy lives in `TermuxActivity`, mechanism in the detector); timing comes from an injected `Scheduler` (`HandlerScheduler` prod / `FakeScheduler` tests), so it's deterministically unit-tested (`KeyGestureDetectorTest`, 19 tests). 15 slots: Vol+/Vol−/Back each single/double/triple/long, combo single/double/triple (never long). The 3 single-tap slots reuse the existing prefs above (zero migration); the 12 new ones use `gesture_<key>_<gesture>` (+`_macro`). UI: `SettingsActivity.addGestureRow(...)` factory + per-key "Advanced" expander + combo subsection + global `gesture_timing_preset` spinner.
 

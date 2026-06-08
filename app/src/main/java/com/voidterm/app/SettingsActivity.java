@@ -77,16 +77,23 @@ public class SettingsActivity extends Activity {
     private static final String[] GESTURE_VALUES_WITH_DEFAULT = {
             SettingsDialog.VOLUME_DEFAULT, SettingsDialog.BACK_ESCAPE,
             SettingsDialog.BACK_TOGGLE_KEYBOARD, SettingsDialog.BACK_MACRO,
-            SettingsDialog.BACK_VOICE};
+            SettingsDialog.BACK_VOICE, SettingsDialog.ACTION_SESSION_NEXT,
+            SettingsDialog.ACTION_SESSION_PREV, SettingsDialog.ACTION_SESSION_DRAWER,
+            SettingsDialog.ACTION_SESSION_NEW};
     private static final String[] VOLUME_SINGLE_LABELS = {
-            "Default (system volume)", "Escape", "Toggle Keyboard", "Macro", "Voice Input"};
+            "Default (system volume)", "Escape", "Toggle Keyboard", "Macro", "Voice Input",
+            "Next Session", "Previous Session", "Sessions Drawer", "New Session"};
     private static final String[] NONEABLE_LABELS = {
-            "None", "Escape", "Toggle Keyboard", "Macro", "Voice Input"};
+            "None", "Escape", "Toggle Keyboard", "Macro", "Voice Input",
+            "Next Session", "Previous Session", "Sessions Drawer", "New Session"};
     private static final String[] BACK_SINGLE_LABELS = {
-            "Escape", "Toggle Keyboard", "Macro", "Voice Input"};
+            "Escape", "Toggle Keyboard", "Macro", "Voice Input",
+            "Next Session", "Previous Session", "Sessions Drawer", "New Session"};
     private static final String[] BACK_SINGLE_VALUES = {
             SettingsDialog.BACK_ESCAPE, SettingsDialog.BACK_TOGGLE_KEYBOARD,
-            SettingsDialog.BACK_MACRO, SettingsDialog.BACK_VOICE};
+            SettingsDialog.BACK_MACRO, SettingsDialog.BACK_VOICE,
+            SettingsDialog.ACTION_SESSION_NEXT, SettingsDialog.ACTION_SESSION_PREV,
+            SettingsDialog.ACTION_SESSION_DRAWER, SettingsDialog.ACTION_SESSION_NEW};
 
     // Text fields that need saving onPause
     private EditText promptField;

@@ -715,7 +715,43 @@ public class TermuxActivity extends Activity implements VoiceInputCallback,
             onVoiceToggle();
             return true;
         }
+        if (SettingsDialog.ACTION_SESSION_NEXT.equals(behavior)) {
+            cycleSession(1);
+            return true;
+        }
+        if (SettingsDialog.ACTION_SESSION_PREV.equals(behavior)) {
+            cycleSession(-1);
+            return true;
+        }
+        if (SettingsDialog.ACTION_SESSION_DRAWER.equals(behavior)) {
+            toggleSessionDrawer();
+            return true;
+        }
+        if (SettingsDialog.ACTION_SESSION_NEW.equals(behavior)) {
+            createNewSession();
+            return true;
+        }
         return false; // default / unknown
+    }
+
+    /** Cycle the active session by {@code delta} (+1 next, -1 previous), wrapping
+     *  around both ends. No-op with fewer than two sessions. */
+    private void cycleSession(int delta) {
+        if (sessionManager == null) return;
+        int count = sessionManager.getSessionCount();
+        if (count <= 1) return;
+        int next = (sessionManager.getCurrentIndex() + delta + count) % count;
+        sessionManager.switchToSession(next);
+    }
+
+    /** Open the session drawer if closed, close it if open. */
+    private void toggleSessionDrawer() {
+        if (drawerLayout == null) return;
+        if (drawerLayout.isDrawerOpen(Gravity.START)) {
+            drawerLayout.closeDrawers();
+        } else {
+            drawerLayout.openDrawer(Gravity.START);
+        }
     }
 
     private void adjustVolume(boolean raise) {
